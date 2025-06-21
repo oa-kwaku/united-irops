@@ -73,10 +73,6 @@ def find_alternative_flights(cancelled_flight_number: str, departure_location: s
         if total_seats_available >= passenger_count:
             break
     
-    print(f"📊 Found {len(selected_flights)} alternative flights with {total_seats_available} total seats for {passenger_count} passengers")
-    print(f"   Earliest arrival: {selected_flights[0]['arrival_time'] if selected_flights else 'No flights'}")
-    print(f"   Latest arrival: {selected_flights[-1]['arrival_time'] if selected_flights else 'No flights'}")
-    
     return selected_flights
 
 @tool
@@ -113,7 +109,6 @@ def get_cancelled_flight_details(cancelled_flight_number: str) -> List[Dict[str,
             'departure_location': details['departure_location']
         }]
     else:
-        print(f"❌ Flight {cancelled_flight_number} not found")
         return []
 
 @tool
@@ -148,16 +143,11 @@ def update_passenger_records(confirmations: List[Dict[str, Any]]) -> int:
             
             if result.get('success'):
                 updated_count += 1
-                if response == "accept rebooking":
-                    print(f"  - DB: Updated passenger {passenger_id} to flight {new_flight}")
-                else:
-                    print(f"  - DB: Updated passenger {passenger_id} to {new_flight} (declined rebooking)")
             else:
-                print(f"  - DB ERROR for {passenger_id}: {result.get('error', 'Unknown error')}")
+                print(f"Database update failed for passenger {passenger_id}: {result.get('error', 'Unknown error')}")
         except Exception as e:
-            print(f"  - DB ERROR for {passenger_id}: {e}")
+            print(f"Database update error for passenger {passenger_id}: {e}")
     
-    print(f"  ✅ Committed {updated_count} updates to passenger records.")
     return updated_count
 
 @tool
@@ -177,7 +167,6 @@ def assign_passengers_to_flights(impacted_passengers_data: List[Dict[str, Any]],
     """
     # Handle case when there are no passengers to assign
     if not impacted_passengers_data:
-        print("⚠️ No passengers to assign - returning empty results")
         return {
             'passengers': [],
             'flights': alternative_flights_data,
@@ -228,9 +217,6 @@ def assign_passengers_to_flights(impacted_passengers_data: List[Dict[str, Any]],
     passengers_not_assigned = 0
     assignment_details = []
     
-    print(f"\n🔄 Assigning {len(passengers_df)} passengers to {len(flights_df)} alternative flights...")
-    print(f"Priority order: {list(passengers_df['loyalty_tier'].value_counts().index)}")
-    
     # Assign each passenger to the earliest available flight with seats
     for idx, passenger in passengers_df.iterrows():
         passenger_id = passenger['passenger_id']
@@ -252,14 +238,11 @@ def assign_passengers_to_flights(impacted_passengers_data: List[Dict[str, Any]],
                     'remaining_seats': flight['available_seats'] - 1
                 })
                 
-                departure_time_str = pd.to_datetime(flight['departure_time']).strftime('%H:%M')
-                print(f"  ✅ {passenger_id} ({loyalty_tier}) → {flight['flight_number']} (departs {departure_time_str}, {flight['available_seats']-1} seats left)")
                 assignments_made += 1
                 assigned = True
                 break
         
         if not assigned:
-            print(f"  ❌ {passenger_id} ({loyalty_tier}) → NO FLIGHT AVAILABLE")
             passengers_not_assigned += 1
     
     # Create assignment summary
@@ -287,14 +270,6 @@ def assign_passengers_to_flights(impacted_passengers_data: List[Dict[str, Any]],
         'assignment_details': assignment_details
     }
     
-    print(f"\n📊 Assignment Summary:")
-    print(f"  Total passengers: {assignment_summary['total_passengers']}")
-    print(f"  Successfully assigned: {assignment_summary['passengers_assigned']}")
-    print(f"  Not assigned: {assignment_summary['passengers_not_assigned']}")
-    print(f"  Assignment rate: {assignment_summary['assignment_rate']:.1f}%")
-    print(f"  Flights used: {assignment_summary['flights_used']}")
-    print(f"  Total seats used: {assignment_summary['total_seats_used']}")
-    
     # Convert results back to serializable format
     return {
         'passengers': passengers_df.to_dict('records'),
@@ -313,7 +288,6 @@ def assign_passengers_from_state() -> Dict[str, Any]:
     """
     # This tool will be called by the LLM after data is stored in state
     # The actual assignment logic will be handled in the main function
-    print("🔄 Assignment tool called - will use data from state")
     return {
         "status": "assignment_initiated",
         "message": "Assignment will be performed using data from state"
@@ -329,14 +303,11 @@ def llm_passenger_rebooking_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     3. Handle edge cases and special circumstances
     4. Provide explanations for its decisions
     """
-    print("🧠 LLM Passenger Rebooking Agent activated")
-    
     if "messages" not in state:
         state["messages"] = []
     
     # Check for passenger confirmations to update the database
     if "confirmations" in state and state.get("confirmations"):
-        print("📥 Processing passenger confirmations to update database...")
         confirmations = state.pop("confirmations")
         
         updated_count = update_passenger_records.invoke({"confirmations": confirmations})
@@ -425,8 +396,6 @@ Always be thorough in your analysis and explain your reasoning clearly."""
     agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, return_intermediate_steps=True)
     
     # Prepare the input for the agent
-    print(f"🔍 About to create agent input for flight {cancelled_flight_number} to {arrival_location}")
-    
     agent_input = f"""
     A flight cancellation has been detected:
     - Flight: {cancelled_flight_number}
@@ -444,97 +413,51 @@ Always be thorough in your analysis and explain your reasoning clearly."""
     Provide clear analysis and reasoning for your decisions.
     """
     
-    print(f"🔍 About to execute agent with input length: {len(agent_input)}")
-    
     try:
-        print(f"🔍 Entering try block...")
         # Execute the agent
         result = agent_executor.invoke({"input": agent_input})
-        print(f"🔍 Agent execution completed")
         
         # Extract the results from the agent's execution
-        print("🤖 LLM Agent completed analysis")
-        
-        # Debug: Check the result structure
-        print(f"🔍 Result type: {type(result)}")
-        print(f"🔍 Result keys: {result.keys() if isinstance(result, dict) else 'Not a dict'}")
-        
-        # Extract the LLM's output and tool calls
         llm_output = result.get("output", "")
-        print(f"🤖 LLM Output: {llm_output}")
-        
-        # Debug: Check for intermediate_steps
-        print(f"🔍 Has intermediate_steps: {'intermediate_steps' in result}")
-        if 'intermediate_steps' in result:
-            print(f"🔍 Intermediate steps length: {len(result['intermediate_steps'])}")
-            print(f"🔍 Intermediate steps: {result['intermediate_steps']}")
         
         # Initialize variables to track extracted data
         assignment_results = None
-        impacted_passengers_df = None
-        alternative_flights_df = None
-        cancelled_flight_info = None
         
         # Check if the LLM actually called the assignment tool
         # The result should contain the tool call results
         if 'intermediate_steps' in result and result['intermediate_steps']:
-            print("🔍 Extracting LLM tool call results...")
-            print(f"📋 LLM made {len(result['intermediate_steps'])} tool calls:")
-            
-            # Show all tool calls made by the LLM
-            for i, step in enumerate(result['intermediate_steps']):
-                if len(step) >= 2:
-                    tool_name = step[0].tool if hasattr(step[0], 'tool') else str(step[0])
-                    print(f"  {i+1}. {tool_name}")
-            
             # Extract individual tool call results
             for step in result['intermediate_steps']:
                 if len(step) >= 2:
                     tool_name = step[0].tool if hasattr(step[0], 'tool') else str(step[0])
                     tool_result = step[1]
-                    tool_args = step[0].tool_input if hasattr(step[0], 'tool_input') else {}
-                    
-                    print(f"🔍 Tool call: {tool_name}")
-                    print(f"   Args: {tool_args}")
-                    print(f"   Result type: {type(tool_result)}")
-                    print(f"   Result length: {len(tool_result) if hasattr(tool_result, '__len__') else 'N/A'}")
                     
                     # Store tool results in state
                     if tool_name == "get_impacted_passengers":
                         state["impacted_passengers_data"] = tool_result
-                        print(f"✅ Stored {len(tool_result)} passengers in state")
                     elif tool_name == "find_alternative_flights":
                         state["alternative_flights_data"] = tool_result
-                        print(f"✅ Stored {len(tool_result)} flights in state")
                     elif tool_name == "get_cancelled_flight_details":
                         state["cancelled_flight_info"] = tool_result
-                        print(f"✅ Stored cancelled flight details in state")
                     elif tool_name == "assign_passengers_from_state":
-                        print(f"🎯 LLM called assign_passengers_from_state!")
                         # Perform the actual assignment using data from state
                         assignment_results = assign_passengers_to_flights.invoke({
                             "impacted_passengers_data": state.get("impacted_passengers_data", []),
                             "alternative_flights_data": state.get("alternative_flights_data", [])
                         })
-                        print(f"✅ Assignment completed using state data")
             
             # If LLM didn't call the assignment tool, we'll do it ourselves
             if not assignment_results:
-                print("🔄 LLM didn't call assignment tool, performing assignment...")
                 assignment_results = assign_passengers_to_flights.invoke({
                     "impacted_passengers_data": state.get("impacted_passengers_data", []),
                     "alternative_flights_data": state.get("alternative_flights_data", [])
                 })
         else:
-            print("❌ No intermediate steps found in LLM result")
             # Perform assignment using state data
             assignment_results = assign_passengers_to_flights.invoke({
                 "impacted_passengers_data": state.get("impacted_passengers_data", []),
                 "alternative_flights_data": state.get("alternative_flights_data", [])
             })
-        
-        # If we still don't have the necessary data, use fallback
-        # Note: Data is now pre-loaded into state, so fallback is not needed
         
         # Get the cancelled flight details for proposal creation
         cancelled_flight_info = state.get("cancelled_flight_info", [])
@@ -589,11 +512,8 @@ Always be thorough in your analysis and explain your reasoning clearly."""
         })
         
         state["messages"].append("LLM Passenger Rebooking Agent completed intelligent rebooking analysis")
-        print(f"📊 Generated {len(proposals)} rebooking proposals")
-        print(f"🤖 LLM Analysis: {llm_output[:200]}...")
         
     except Exception as e:
-        print(f"❌ LLM Agent encountered an error: {e}")
         state["messages"].append(f"LLM Passenger Rebooking Agent error: {str(e)}")
         # Fallback to basic functionality
         state["messages"].append("Falling back to basic rebooking logic")
@@ -628,7 +548,7 @@ def test_llm_agent():
     print(f"Number of rebooking proposals: {len(result.get('rebooking_proposals', []))}")
     
     if result.get('llm_analysis'):
-        print(f"\n🤖 LLM Analysis:")
+        print(f"\nLLM Analysis:")
         print(result['llm_analysis'])
     
     return result

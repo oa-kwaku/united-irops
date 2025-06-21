@@ -1,4 +1,3 @@
-import sqlite3
 import json
 import pandas as pd
 from typing import Dict, Any, List
@@ -8,20 +7,30 @@ from langchain_anthropic import ChatAnthropic
 from langchain.prompts import ChatPromptTemplate
 import os
 from dotenv import load_dotenv
+from services.database_mcp_client import get_database_client
 
 # Load environment variables
 load_dotenv()
+
+# Global database client instance
+_database_client = None
+
+def get_database_client_instance():
+    """Get or create the global database client instance."""
+    global _database_client
+    if _database_client is None:
+        _database_client = get_database_client()
+    return _database_client
 
 # Constants
 MAX_DUTY_HOURS = 10
 MIN_REST_HOURS = 10
 MAX_FATIGUE_SCORE = 1.0
-DB_PATH = "../database/united_ops.db"
 
 @tool
 def log_message_tool(agent_name: str, message: str, run_id: str = "default", context: Dict[str, Any] = None) -> str:
     """
-    Logs a message from an agent to the shared agent_logs table in SQLite.
+    Logs a message from an agent to the shared agent_logs table via MCP.
 
     Args:
         agent_name (str): The name of the agent logging the message.
@@ -33,33 +42,28 @@ def log_message_tool(agent_name: str, message: str, run_id: str = "default", con
         str: Confirmation that the message was logged.
     """
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS agent_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT DEFAULT (DATETIME('now')),
-                run_id TEXT,
-                agent_name TEXT,
-                message TEXT,
-                context TEXT
-            )
-        """)
-        cursor.execute("""
-            INSERT INTO agent_logs (run_id, agent_name, message, context)
-            VALUES (?, ?, ?, ?)
-        """, (
-            run_id,
-            agent_name,
-            message,
-            json.dumps(context or {})
-        ))
-        conn.commit()
-        return f"✅ Logged message for {agent_name}"
+        db_client = get_database_client_instance()
+        
+        # Use the database MCP client to log messages
+        # Note: This would need to be implemented in the database MCP server
+        # For now, we'll use a simple approach
+        log_data = {
+            "run_id": run_id,
+            "agent_name": agent_name,
+            "message": message,
+            "context": json.dumps(context or {})
+        }
+        
+        # Try to use a generic tool call if available
+        result = db_client.execute_tool("log_message", log_data)
+        
+        if result.get("success"):
+            return f"✅ Logged message for {agent_name}"
+        else:
+            return f"❌ Failed to log message: {result.get('error', 'Unknown error')}"
+            
     except Exception as e:
         return f"❌ Failed to log message: {str(e)}"
-    finally:
-        conn.close()
 
 @tool
 def check_legality_tool(crew_schedule: List[Dict[str, Any]]) -> List[str]:
@@ -72,6 +76,10 @@ def check_legality_tool(crew_schedule: List[Dict[str, Any]]) -> List[str]:
     - fatigue_score
     If input is nested, it will be flattened.
     """
+    # Handle case where input is a dictionary with crew_schedule key
+    if isinstance(crew_schedule, dict) and "crew_schedule" in crew_schedule:
+        crew_schedule = crew_schedule["crew_schedule"]
+    
     # Handle nested input
     if all("crew" in item and "flight_id" in item for item in crew_schedule):
         flat_crew = []
@@ -100,7 +108,7 @@ def check_legality_tool(crew_schedule: List[Dict[str, Any]]) -> List[str]:
 @tool
 def get_unassigned_crew_from_db(input: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     """
-    Pulls unassigned crew directly from the SQLite database.
+    Pulls unassigned crew from the database via MCP client.
     Can be invoked with no parameters.
 
     Crew must have:
@@ -108,17 +116,39 @@ def get_unassigned_crew_from_db(input: Dict[str, Any] = None) -> List[Dict[str, 
     - Rest hours >= MIN_REST_HOURS
     - Fatigue score <= MAX_FATIGUE_SCORE
     """
-    conn = sqlite3.connect(DB_PATH)
-    query = """
-        SELECT crew_id, name, base, rest_hours_prior, fatigue_score, role
-        FROM crew
-        WHERE assigned_flight IS NULL
-          AND rest_hours_prior >= ?
-          AND fatigue_score <= ?
-    """
-    df = pd.read_sql_query(query, conn, params=[MIN_REST_HOURS, MAX_FATIGUE_SCORE])
-    conn.close()
-    return df.to_dict(orient="records")
+    try:
+        db_client = get_database_client_instance()
+        
+        # Query crew with the specified criteria
+        crew_data = db_client.query_crew(
+            assigned_flight=None,  # Unassigned crew
+            min_rest_hours=MIN_REST_HOURS,
+            max_fatigue_score=MAX_FATIGUE_SCORE
+        )
+        
+        return crew_data
+        
+    except Exception as e:
+        print(f"⚠️ Initial attempt failed: {e}")
+        
+        # Fallback: try to get all crew and filter in memory
+        try:
+            db_client = get_database_client_instance()
+            all_crew = db_client.query_crew()
+            
+            # Filter in memory
+            unassigned_crew = [
+                crew for crew in all_crew
+                if crew.get('assigned_flight') is None
+                and crew.get('rest_hours_prior', 0) >= MIN_REST_HOURS
+                and crew.get('fatigue_score', 1.0) <= MAX_FATIGUE_SCORE
+            ]
+            
+            return unassigned_crew
+            
+        except Exception as fallback_error:
+            print(f"❌ Fallback also failed: {fallback_error}")
+            return []
 
 @tool
 def propose_substitutes_tool(violations: List[str], crew_schedule: List[Dict[str, Any]], unassigned_crew: List[Dict[str, Any]]) -> Dict[str, List[str]]:
@@ -143,6 +173,14 @@ def propose_substitutes_tool(violations: List[str], crew_schedule: List[Dict[str
     Output:
     - Returns a dictionary mapping `flight_id` to a list of proposed new crew assignments.
     """
+    # Handle case where input is a dictionary with individual keys
+    if isinstance(violations, dict):
+        violations = violations.get("violations", [])
+    if isinstance(crew_schedule, dict):
+        crew_schedule = crew_schedule.get("crew_schedule", [])
+    if isinstance(unassigned_crew, dict):
+        unassigned_crew = unassigned_crew.get("unassigned_crew", [])
+    
     df = pd.DataFrame(crew_schedule)
     unassigned = pd.DataFrame(unassigned_crew)
     substitutions = {}
@@ -160,20 +198,26 @@ def propose_substitutes_tool(violations: List[str], crew_schedule: List[Dict[str
 @tool
 def get_full_schedule_from_db(input: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     """
-    Pulls the entire current crew schedule from the SQLite database,
+    Pulls the entire current crew schedule from the database via MCP client,
     including assigned_flight, duty_start, fatigue_score, and other FAA-relevant fields.
     """
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("""
-        SELECT
-            crew_id, name, assigned_flight, base, duty_start, duty_end,
-            rest_hours_prior, last_flight_end, fatigue_score, role
-        FROM crew
-        WHERE duty_start IS NOT NULL AND duty_end IS NOT NULL
-    """, conn)
-    conn.close()
-    df[["duty_start", "duty_end", "last_flight_end"]] = df[["duty_start", "duty_end", "last_flight_end"]].apply(pd.to_datetime)
-    return df.to_dict(orient="records")
+    try:
+        db_client = get_database_client_instance()
+        
+        # Query all crew with duty assignments
+        crew_data = db_client.query_crew(has_duty_assignment=True)
+        
+        # Convert datetime fields
+        for crew in crew_data:
+            for field in ['duty_start', 'duty_end', 'last_flight_end']:
+                if crew.get(field):
+                    crew[field] = pd.to_datetime(crew[field])
+        
+        return crew_data
+        
+    except Exception as e:
+        print(f"⚠️ Error getting crew schedule: {e}")
+        return []
 
 def crew_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -239,9 +283,13 @@ def crew_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         try:
             # Retry: Run legality and substitutions directly
             crew_schedule = get_full_schedule_from_db({})
-            violations = check_legality_tool(crew_schedule)
+            violations = check_legality_tool.invoke({"crew_schedule": crew_schedule})
             unassigned_crew = get_unassigned_crew_from_db({})
-            substitutions = propose_substitutes_tool(violations=violations, crew_schedule=crew_schedule, unassigned_crew=unassigned_crew)
+            substitutions = propose_substitutes_tool.invoke({
+                "violations": violations, 
+                "crew_schedule": crew_schedule, 
+                "unassigned_crew": unassigned_crew
+            })
 
         except Exception as e2:
             print(f"❌ Fallback also failed: {e2}")

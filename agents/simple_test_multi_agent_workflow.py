@@ -1,6 +1,11 @@
 # United Airlines Operations Agentic System
 # This file contains the graph assembly and execution code for the United Airlines multi-agent operations system
 
+import sys
+import os
+# Add the parent directory to the path so we can import from agents
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import pandas as pd
 from typing import Annotated, TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph, END

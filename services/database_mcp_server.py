@@ -69,6 +69,23 @@ class UnitedAirlinesDatabaseMCPServer:
                 handler=self._query_flights
             ),
             DatabaseTool(
+                name="query_crew",
+                description="Query crew with optional filters for assigned_flight, role, base, etc.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "assigned_flight": {"type": "string", "description": "Flight number to filter by (use null for unassigned)"},
+                        "role": {"type": "string", "description": "Crew role to filter by (Pilot, Attendant, etc.)"},
+                        "base": {"type": "string", "description": "Crew base to filter by"},
+                        "min_rest_hours": {"type": "number", "description": "Minimum rest hours required"},
+                        "max_fatigue_score": {"type": "number", "description": "Maximum fatigue score allowed"},
+                        "has_duty_assignment": {"type": "boolean", "description": "Filter for crew with duty assignments"},
+                        "limit": {"type": "integer", "description": "Maximum number of results to return"}
+                    }
+                },
+                handler=self._query_crew
+            ),
+            DatabaseTool(
                 name="update_passenger_flight",
                 description="Update a passenger's flight assignment.",
                 input_schema={
@@ -117,6 +134,33 @@ class UnitedAirlinesDatabaseMCPServer:
                     "required": ["flight_number"]
                 },
                 handler=self._get_passenger_count
+            ),
+            DatabaseTool(
+                name="read_messages",
+                description="Read agent messages from the agent_logs table for a given run_id.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "run_id": {"type": "string", "description": "Unique identifier for this execution run"}
+                    },
+                    "required": ["run_id"]
+                },
+                handler=self._read_messages
+            ),
+            DatabaseTool(
+                name="log_message",
+                description="Log a message from an agent to the agent_logs table.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "run_id": {"type": "string", "description": "Unique identifier for this execution run"},
+                        "agent_name": {"type": "string", "description": "Name of the agent logging the message"},
+                        "message": {"type": "string", "description": "The log message"},
+                        "context": {"type": "string", "description": "JSON string of context data (optional)"}
+                    },
+                    "required": ["run_id", "agent_name", "message"]
+                },
+                handler=self._log_message
             )
         ]
     
@@ -216,6 +260,54 @@ class UnitedAirlinesDatabaseMCPServer:
             result = df.to_dict('records')
             
             logger.info(f"✈️ Query flights: {len(result)} results")
+            return result
+            
+        finally:
+            conn.close()
+    
+    def _query_crew(self, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Query crew with optional filters."""
+        conn = self._get_connection()
+        try:
+            query = "SELECT * FROM crew WHERE 1=1"
+            query_params = []
+            
+            if "assigned_flight" in params:
+                if params["assigned_flight"] is None:
+                    query += " AND assigned_flight IS NULL"
+                else:
+                    query += " AND assigned_flight = ?"
+                    query_params.append(params["assigned_flight"])
+            
+            if "role" in params:
+                query += " AND role = ?"
+                query_params.append(params["role"])
+            
+            if "base" in params:
+                query += " AND base = ?"
+                query_params.append(params["base"])
+            
+            if "min_rest_hours" in params:
+                query += " AND rest_hours_prior >= ?"
+                query_params.append(params["min_rest_hours"])
+            
+            if "max_fatigue_score" in params:
+                query += " AND fatigue_score <= ?"
+                query_params.append(params["max_fatigue_score"])
+            
+            if "has_duty_assignment" in params:
+                if params["has_duty_assignment"]:
+                    query += " AND duty_start IS NOT NULL AND duty_end IS NOT NULL"
+                else:
+                    query += " AND (duty_start IS NULL OR duty_end IS NULL)"
+            
+            if "limit" in params:
+                query += f" LIMIT {params['limit']}"
+            
+            df = pd.read_sql_query(query, conn, params=query_params)
+            result = df.to_dict('records')
+            
+            logger.info(f"👩‍💼 Query crew: {len(result)} results")
             return result
             
         finally:
@@ -332,6 +424,85 @@ class UnitedAirlinesDatabaseMCPServer:
                 "passenger_count": int(passenger_count)
             }
             
+        finally:
+            conn.close()
+    
+    def _read_messages(self, params: Dict[str, Any]) -> str:
+        """Read agent messages from the agent_logs table for a given run_id."""
+        conn = self._get_connection()
+        try:
+            run_id = params["run_id"]
+            
+            # Create table if it doesn't exist
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agent_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT DEFAULT (DATETIME('now')),
+                    run_id TEXT,
+                    agent_name TEXT,
+                    message TEXT,
+                    context TEXT
+                )
+            """)
+            
+            cursor.execute("""
+                SELECT timestamp, agent_name, message
+                FROM agent_logs
+                WHERE run_id = ?
+                ORDER BY timestamp ASC
+            """, (run_id,))
+            rows = cursor.fetchall()
+            
+            if not rows:
+                return f"No messages found in database for run_id: {run_id}"
+            
+            return "\n".join(f"{ts} | {agent}: {msg}" for ts, agent, msg in rows)
+            
+        finally:
+            conn.close()
+    
+    def _log_message(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Log a message from an agent to the agent_logs table."""
+        conn = self._get_connection()
+        try:
+            run_id = params["run_id"]
+            agent_name = params["agent_name"]
+            message = params["message"]
+            context = params.get("context", "{}")
+            
+            # Create table if it doesn't exist
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agent_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT DEFAULT (DATETIME('now')),
+                    run_id TEXT,
+                    agent_name TEXT,
+                    message TEXT,
+                    context TEXT
+                )
+            """)
+            
+            cursor.execute("""
+                INSERT INTO agent_logs (run_id, agent_name, message, context)
+                VALUES (?, ?, ?, ?)
+            """, (run_id, agent_name, message, context))
+            
+            conn.commit()
+            
+            logger.info(f"📝 Logged message for {agent_name}")
+            return {
+                "success": True,
+                "message": f"Logged message for {agent_name}"
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error logging message: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
         finally:
             conn.close()
 

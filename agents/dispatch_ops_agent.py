@@ -1,6 +1,16 @@
 import pandas as pd
 from typing import Dict, Any, List
-import sqlite3
+from services.database_mcp_client import get_database_client
+
+# Global database client instance
+_database_client = None
+
+def get_database_client_instance():
+    """Get or create the global database client instance."""
+    global _database_client
+    if _database_client is None:
+        _database_client = get_database_client()
+    return _database_client
 
 # FAA rule thresholds
 MAX_DUTY_HOURS = 10
@@ -38,19 +48,58 @@ def check_legality_tool(crew_schedule: List[Dict[str, Any]]) -> List[str]:
 # Pull unassigned crew from the database
 def get_unassigned_crew_from_db() -> List[Dict[str, Any]]:
     """
-    Get unassigned crew members from the database.
+    Get unassigned crew members from the database via MCP client.
     """
-    conn = sqlite3.connect("../database/united_ops.db")
-    query = """
-        SELECT crew_id, name, base, rest_hours_prior, fatigue_score, role
-        FROM crew
-        WHERE assigned_flight IS NULL
-          AND rest_hours_prior >= ?
-          AND fatigue_score <= ?
-    """
-    df = pd.read_sql_query(query, conn, params=[MIN_REST_HOURS, MAX_FATIGUE_SCORE])
-    conn.close()
-    return df.to_dict(orient="records")
+    try:
+        db_client = get_database_client_instance()
+        
+        # Try to use the MCP client first
+        try:
+            crew_data = db_client.query_crew(
+                assigned_flight=None,  # Unassigned crew
+                min_rest_hours=MIN_REST_HOURS,
+                max_fatigue_score=MAX_FATIGUE_SCORE
+            )
+            return crew_data
+        except AttributeError:
+            # MCP client doesn't have query_crew method yet, fallback to direct SQLite
+            import sqlite3
+            print("🔄 Database MCP not avilable - Falling back to direct SQLite connection...")
+            conn = sqlite3.connect("../database/united_ops.db")
+            query = """
+                SELECT crew_id, name, base, rest_hours_prior, fatigue_score, role
+                FROM crew
+                WHERE assigned_flight IS NULL
+                  AND rest_hours_prior >= ?
+                  AND fatigue_score <= ?
+            """
+            df = pd.read_sql_query(query, conn, params=[MIN_REST_HOURS, MAX_FATIGUE_SCORE])
+            conn.close()
+            return df.to_dict(orient="records")
+        
+    except Exception as e:
+        print(f"⚠️ Error getting unassigned crew: {e}")
+        
+        # Final fallback: try to get all crew and filter in memory
+        try:
+            import sqlite3
+            conn = sqlite3.connect("../database/united_ops.db")
+            df = pd.read_sql_query("SELECT * FROM crew", conn)
+            conn.close()
+            
+            # Filter in memory
+            unassigned_crew = [
+                crew for crew in df.to_dict(orient="records")
+                if crew.get('assigned_flight') is None
+                and crew.get('rest_hours_prior', 0) >= MIN_REST_HOURS
+                and crew.get('fatigue_score', 1.0) <= MAX_FATIGUE_SCORE
+            ]
+            
+            return unassigned_crew
+            
+        except Exception as fallback_error:
+            print(f"❌ Fallback also failed: {fallback_error}")
+            return []
 
 # Suggest substitute crew
 def propose_substitutes_tool(violations: List[str], crew_schedule: List[Dict[str, Any]], unassigned_crew: List[Dict[str, Any]]) -> Dict[str, List[str]]:
@@ -81,6 +130,10 @@ def check_faa_legality_compliance(state: Dict[str, Any]) -> bool:
         if not crew_schedule:
             state.setdefault("messages", []).append("No crew schedule provided.")
             return False
+
+        # Convert DataFrame to list of dictionaries if needed
+        if hasattr(crew_schedule, 'to_dict'):
+            crew_schedule = crew_schedule.to_dict('records')
 
         violations = check_legality_tool(crew_schedule)
         state["legality_flags"] = violations

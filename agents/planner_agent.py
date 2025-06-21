@@ -1,4 +1,3 @@
-import sqlite3
 import os
 import re
 from typing import Dict, Any, Union, List
@@ -8,16 +7,25 @@ from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain.prompts import ChatPromptTemplate
 import os
 from dotenv import load_dotenv
+from services.database_mcp_client import get_database_client
 
 # Load environment variables
 load_dotenv()
 
-DB_PATH = "../database/united_ops.db"
+# Global database client instance
+_database_client = None
+
+def get_database_client_instance():
+    """Get or create the global database client instance."""
+    global _database_client
+    if _database_client is None:
+        _database_client = get_database_client()
+    return _database_client
 
 @tool
 def read_messages_tool(run_id: str = "default") -> str:
     """
-    Reads all agent messages for a given run_id from the agent_logs table in SQLite.
+    Reads all agent messages for a given run_id from the agent_logs table via MCP.
 
     Args:
         run_id (str): Unique identifier for this execution run (e.g., "UA-ops-2025-06-20")
@@ -26,21 +34,17 @@ def read_messages_tool(run_id: str = "default") -> str:
         str: A formatted chronological log of all system messages for the run.
     """
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT timestamp, agent_name, message
-            FROM agent_logs
-            WHERE run_id = ?
-            ORDER BY timestamp ASC
-        """, (run_id,))
-        rows = cursor.fetchall()
-        conn.close()
-
-        if not rows:
-            return f"No messages found in database for run_id: {run_id}"
-
-        return "\n".join(f"{ts} | {agent}: {msg}" for ts, agent, msg in rows)
+        db_client = get_database_client_instance()
+        
+        # Use the database MCP client to read messages
+        # Note: This would need to be implemented in the database MCP server
+        # For now, we'll use a simple approach
+        result = db_client.execute_tool("read_messages", {"run_id": run_id})
+        
+        if result.get("success"):
+            return result.get("result", f"No messages found in database for run_id: {run_id}")
+        else:
+            return f"❌ Error fetching messages from DB: {result.get('error', 'Unknown error')}"
 
     except Exception as e:
         return f"❌ Error fetching messages from DB: {str(e)}"

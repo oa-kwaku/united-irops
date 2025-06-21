@@ -37,6 +37,15 @@ def confirmation_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         print(f"📨 Sending {len(proposals)} rebooking proposals to passenger communications system...")
         sent_messages = []
         
+        # Clear any previous responses to avoid message ID conflicts
+        try:
+            # Get and discard any existing responses to start fresh
+            existing_responses = mcp_client.get_all_available_responses()
+            if existing_responses:
+                print(f"🧹 Cleared {len(existing_responses)} previous responses to avoid conflicts")
+        except Exception as e:
+            print(f"⚠️ Could not clear previous responses: {e}")
+        
         # Send all proposals in a batch (no individual delays)
         for i, proposal in enumerate(proposals):
             if proposal.get("assignment_successful"):

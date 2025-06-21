@@ -114,6 +114,43 @@ class DatabaseMCPClient:
         result = self.execute_tool("query_flights", params)
         return result.get("result", [])
     
+    def query_crew(self, assigned_flight: Optional[str] = None, role: Optional[str] = None, base: Optional[str] = None, 
+                   min_rest_hours: Optional[float] = None, max_fatigue_score: Optional[float] = None, 
+                   has_duty_assignment: Optional[bool] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Query crew with optional filters.
+        
+        Args:
+            assigned_flight: Flight number to filter by (use None for unassigned)
+            role: Crew role to filter by (Pilot, Attendant, etc.)
+            base: Crew base to filter by
+            min_rest_hours: Minimum rest hours required
+            max_fatigue_score: Maximum fatigue score allowed
+            has_duty_assignment: Filter for crew with duty assignments
+            limit: Maximum number of results
+            
+        Returns:
+            List of crew dictionaries
+        """
+        params = {}
+        if assigned_flight is not None:
+            params['assigned_flight'] = assigned_flight
+        if role:
+            params['role'] = role
+        if base:
+            params['base'] = base
+        if min_rest_hours is not None:
+            params['min_rest_hours'] = min_rest_hours
+        if max_fatigue_score is not None:
+            params['max_fatigue_score'] = max_fatigue_score
+        if has_duty_assignment is not None:
+            params['has_duty_assignment'] = has_duty_assignment
+        if limit:
+            params['limit'] = limit
+        
+        result = self.execute_tool("query_crew", params)
+        return result.get("result", [])
+    
     def update_passenger_flight(self, passenger_id: str, new_flight: str, reason: str = "No reason provided") -> Dict[str, Any]:
         """
         Update a passenger's flight assignment.
