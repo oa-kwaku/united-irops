@@ -9,7 +9,7 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 import inspect
-from database_mcp_client import get_database_client
+from services.database_mcp_client import get_database_client
 
 # Load environment variables
 load_dotenv()

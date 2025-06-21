@@ -1,7 +1,7 @@
 import random
 from typing import Dict, Any, List
 import pandas as pd
-from passenger_communications_mcp_client import get_mcp_client
+from services.passenger_communications_mcp_client import get_mcp_client
 import time
 
 # Global MCP client instance

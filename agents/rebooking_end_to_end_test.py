@@ -48,7 +48,11 @@ def run_end_to_end_test_with_langgraph():
         print("\n--- Step 2: Collecting Passenger Confirmations ---")
         
         # Loop until all responses are collected
-        while not state.get("all_responses_processed", False):
+        loop_count = 0
+        max_loops = 10  # Prevent infinite loops
+        
+        while not state.get("all_responses_processed", False) and loop_count < max_loops:
+            loop_count += 1
             state = confirmation_agent(state)  # type: ignore
             
             # If we have a batch ready, process it
@@ -64,6 +68,11 @@ def run_end_to_end_test_with_langgraph():
                 # Clear the batch and continue collecting
                 state["current_batch"] = []
                 state["batch_ready"] = False
+        
+        if loop_count >= max_loops:
+            print(f"⚠️ Reached maximum loops ({max_loops}) - forcing completion")
+            state["all_responses_processed"] = True
+            state["messages"] = state.get("messages", []) + [f"WARNING: Reached maximum confirmation loops ({max_loops})"]
         
         print(f"✅ All confirmations collected: {len(state.get('confirmations', []))}")
         return state
@@ -117,11 +126,7 @@ def run_end_to_end_test_with_langgraph():
         return
         
     # Fix database path for verification
-    db_path = "../database/united_ops.db"  # Relative path from agents directory
-    if not os.path.isabs(db_path):
-        # Convert relative path to absolute path
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        db_path = os.path.join(current_dir, db_path)
+    db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "database", "united_ops.db"))
     
     print(f"📁 Using database path for verification: {db_path}")
     conn = sqlite3.connect(db_path)

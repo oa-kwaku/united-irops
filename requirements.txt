@@ -1,5 +1,10 @@
 pandas
 langgraph
 langchain-core
+langchain-anthropic
+langchain
 requests
-flask 
+flask
+psutil
+python-dotenv
+sqlite3 
