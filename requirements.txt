@@ -1,0 +1,5 @@
+pandas
+langgraph
+langchain-core
+requests
+flask 

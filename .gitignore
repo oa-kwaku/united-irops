@@ -5,3 +5,5 @@
 
 LangGraph_Presentation_vUnited.pdf
 notebook_integration_guide.md
+agents/tests/*
+agents/backups/*
