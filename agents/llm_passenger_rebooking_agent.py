@@ -7,15 +7,25 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema import BaseMessage, HumanMessage, AIMessage
 import os
 from dotenv import load_dotenv
-import sqlite3
 from datetime import datetime
 import inspect
+from database_mcp_client import get_database_client
 
 # Load environment variables
 load_dotenv()
 
+# Global database client instance
+_database_client = None
+
+def get_database_client_instance():
+    """Get or create the global database client instance."""
+    global _database_client
+    if _database_client is None:
+        _database_client = get_database_client()
+    return _database_client
+
 @tool
-def find_alternative_flights(cancelled_flight_number: str, departure_location: str, arrival_location: str, cancelled_departure_time: str, passenger_count: int = 10, db_path: str = "database/united_ops.db") -> List[Dict[str, Any]]:
+def find_alternative_flights(cancelled_flight_number: str, departure_location: str, arrival_location: str, cancelled_departure_time: str, passenger_count: int = 10) -> List[Dict[str, Any]]:
     """
     Find alternative flights with the same origin and destination with departure times later than the cancelled flight.
     Builds the list dynamically until we have enough seats to accommodate all passengers, prioritized by earliest arrival time.
@@ -26,55 +36,37 @@ def find_alternative_flights(cancelled_flight_number: str, departure_location: s
         arrival_location: The destination airport code
         cancelled_departure_time: The departure time of the cancelled flight
         passenger_count: Number of passengers to accommodate
-        db_path: The path to the SQLite database
         
     Returns:
         List of dictionaries with alternative flight information including available seats
     """
-    conn = sqlite3.connect(db_path)
+    db_client = get_database_client_instance()
     
     # Query for all alternative flights ordered by arrival time (earliest first)
     # We'll build the list dynamically until we have enough seats
-    alternative_flights_query = """
-    SELECT 
-        flight_number,
-        departure_location,
-        arrival_location,
-        departure_time,
-        arrival_time,
-        gate,
-        status,
-        crew_required,
-        flight_duration_minutes,
-        is_international,
-        available_seats
-    FROM flights 
-    WHERE departure_location = ?
-    AND arrival_location = ?
-    AND departure_time > ?
-    AND flight_number != ?
-    AND status != 'cancelled'
-    ORDER BY arrival_time ASC
-    """
-    
-    all_alternative_flights_df = pd.read_sql_query(
-        alternative_flights_query,
-        conn,
-        params=[departure_location, arrival_location, cancelled_departure_time, cancelled_flight_number]
+    alternative_flights = db_client.query_flights(
+        departure_location=departure_location,
+        arrival_location=arrival_location,
+        limit=100  # Get a large batch to work with
     )
     
-    # Convert time columns to datetime for easier manipulation
-    all_alternative_flights_df['departure_time'] = pd.to_datetime(all_alternative_flights_df['departure_time'])
-    all_alternative_flights_df['arrival_time'] = pd.to_datetime(all_alternative_flights_df['arrival_time'])
+    # Filter flights that depart after the cancelled flight and are not cancelled
+    filtered_flights = []
+    for flight in alternative_flights:
+        if (flight['departure_time'] > cancelled_departure_time and 
+            flight['flight_number'] != cancelled_flight_number and 
+            flight['status'] != 'cancelled'):
+            filtered_flights.append(flight)
     
-    conn.close()
+    # Sort by arrival time (earliest first)
+    filtered_flights.sort(key=lambda x: x['arrival_time'])
     
     # Build the list dynamically until we have enough seats
     selected_flights = []
     total_seats_available = 0
     
-    for _, flight in all_alternative_flights_df.iterrows():
-        selected_flights.append(flight.to_dict())
+    for flight in filtered_flights:
+        selected_flights.append(flight)
         total_seats_available += flight['available_seats']
         
         # Stop when we have enough seats to accommodate all passengers
@@ -88,59 +80,44 @@ def find_alternative_flights(cancelled_flight_number: str, departure_location: s
     return selected_flights
 
 @tool
-def get_impacted_passengers(cancelled_flight_number: str, db_path: str = "database/united_ops.db") -> List[Dict[str, Any]]:
+def get_impacted_passengers(cancelled_flight_number: str) -> List[Dict[str, Any]]:
     """
     Get all passengers on the cancelled flight with their loyalty tiers.
     Args:
         cancelled_flight_number: The flight number of the cancelled flight.
-        db_path: Path to the database.
     Returns:
         List of dictionaries with passenger_id, name, and loyalty_tier.
     """
-    conn = sqlite3.connect(db_path)
-    impacted_passengers_query = """
-    SELECT passenger_id, name, loyalty_tier
-    FROM passengers 
-    WHERE flight_number = ?
-    """
-    impacted_passengers_df = pd.read_sql_query(
-        impacted_passengers_query, 
-        conn, 
-        params=[cancelled_flight_number]
-    )
-    conn.close()
+    db_client = get_database_client_instance()
+    impacted_passengers = db_client.query_passengers(flight_number=cancelled_flight_number)
     
     # Convert to list of dictionaries for serialization
-    return impacted_passengers_df.to_dict('records')
+    return impacted_passengers
 
 @tool
-def get_cancelled_flight_details(cancelled_flight_number: str, db_path: str = "database/united_ops.db") -> List[Dict[str, Any]]:
+def get_cancelled_flight_details(cancelled_flight_number: str) -> List[Dict[str, Any]]:
     """
     Get the cancelled flight's departure time and location.
     Args:
         cancelled_flight_number: The flight number of the cancelled flight.
-        db_path: Path to the database.
     Returns:
         List of dictionaries with departure_time and departure_location.
     """
-    conn = sqlite3.connect(db_path)
-    cancelled_flight_query = """
-    SELECT departure_time, departure_location
-    FROM flights
-    WHERE flight_number = ?
-    """
-    cancelled_flight_info = pd.read_sql_query(
-        cancelled_flight_query,
-        conn,
-        params=[cancelled_flight_number]
-    )
-    conn.close()
+    db_client = get_database_client_instance()
+    flight_details = db_client.get_flight_details(cancelled_flight_number)
     
-    # Convert to list of dictionaries for serialization
-    return cancelled_flight_info.to_dict('records')
+    if flight_details.get('success'):
+        details = flight_details['details']
+        return [{
+            'departure_time': details['departure_time'],
+            'departure_location': details['departure_location']
+        }]
+    else:
+        print(f"❌ Flight {cancelled_flight_number} not found")
+        return []
 
 @tool
-def update_passenger_records(confirmations: List[Dict[str, Any]], db_path: str = "database/united_ops.db") -> int:
+def update_passenger_records(confirmations: List[Dict[str, Any]]) -> int:
     """
     Processes passenger confirmations and updates the database for all passengers.
     - Accepted rebookings: Updates to new flight
@@ -148,15 +125,13 @@ def update_passenger_records(confirmations: List[Dict[str, Any]], db_path: str =
     
     Args:
         confirmations: A list of confirmation dictionaries from the confirmation_agent.
-        db_path: Path to the database.
     Returns:
         The number of passenger records updated.
     """
     if not confirmations:
         return 0
 
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    db_client = get_database_client_instance()
     updated_count = 0
     
     for conf in confirmations:
@@ -165,18 +140,23 @@ def update_passenger_records(confirmations: List[Dict[str, Any]], db_path: str =
         response = conf.get('response', '')
         
         try:
-            cursor.execute("UPDATE passengers SET flight_number = ? WHERE passenger_id = ?", (new_flight, passenger_id))
-            if cursor.rowcount > 0:
+            result = db_client.update_passenger_flight(
+                passenger_id=passenger_id,
+                new_flight=new_flight,
+                reason=f"Rebooking confirmation: {response}"
+            )
+            
+            if result.get('success'):
                 updated_count += 1
                 if response == "accept rebooking":
                     print(f"  - DB: Updated passenger {passenger_id} to flight {new_flight}")
                 else:
                     print(f"  - DB: Updated passenger {passenger_id} to {new_flight} (declined rebooking)")
-        except sqlite3.Error as e:
+            else:
+                print(f"  - DB ERROR for {passenger_id}: {result.get('error', 'Unknown error')}")
+        except Exception as e:
             print(f"  - DB ERROR for {passenger_id}: {e}")
     
-    conn.commit()
-    conn.close()
     print(f"  ✅ Committed {updated_count} updates to passenger records.")
     return updated_count
 
@@ -195,6 +175,23 @@ def assign_passengers_to_flights(impacted_passengers_data: List[Dict[str, Any]],
     Returns:
         Dictionary with assignment results and summary
     """
+    # Handle case when there are no passengers to assign
+    if not impacted_passengers_data:
+        print("⚠️ No passengers to assign - returning empty results")
+        return {
+            'passengers': [],
+            'flights': alternative_flights_data,
+            'summary': {
+                'total_passengers': 0,
+                'passengers_assigned': 0,
+                'passengers_not_assigned': 0,
+                'assignment_rate': 0.0,
+                'flights_used': 0,
+                'total_seats_used': 0,
+                'assignment_details': []
+            }
+        }
+    
     # Convert to DataFrames for processing
     passengers_df = pd.DataFrame(impacted_passengers_data)
     flights_df = pd.DataFrame(alternative_flights_data)
@@ -322,7 +319,7 @@ def assign_passengers_from_state() -> Dict[str, Any]:
         "message": "Assignment will be performed using data from state"
     }
 
-def llm_passenger_rebooking_agent(state: Dict[str, Any], db_path: str = "database/united_ops.db") -> Dict[str, Any]:
+def llm_passenger_rebooking_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     LLM-powered Passenger Rebooking Agent that makes intelligent decisions about passenger rebooking.
     
@@ -342,14 +339,7 @@ def llm_passenger_rebooking_agent(state: Dict[str, Any], db_path: str = "databas
         print("📥 Processing passenger confirmations to update database...")
         confirmations = state.pop("confirmations")
         
-        # Ensure we use the correct database path
-        if not os.path.isabs(db_path):
-            # Convert relative path to absolute path
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            db_path = os.path.join(current_dir, db_path)
-        
-        print(f"📁 Using database path: {db_path}")
-        updated_count = update_passenger_records.invoke({"confirmations": confirmations, "db_path": db_path})
+        updated_count = update_passenger_records.invoke({"confirmations": confirmations})
         state["messages"].append(f"LLM Passenger Rebooking Agent updated {updated_count} passenger records in the database.")
         return state
 
@@ -550,8 +540,7 @@ Always be thorough in your analysis and explain your reasoning clearly."""
         cancelled_flight_info = state.get("cancelled_flight_info", [])
         if not cancelled_flight_info:
             cancelled_flight_info = get_cancelled_flight_details.invoke({
-                "cancelled_flight_number": cancelled_flight_number, 
-                "db_path": db_path
+                "cancelled_flight_number": cancelled_flight_number
             })
         
         cancelled_departure_time = cancelled_flight_info[0]['departure_time']
@@ -634,8 +623,8 @@ def test_llm_agent():
     result = llm_passenger_rebooking_agent(test_state)
     
     print("\nTest Results:")
-    print(f"Impacted passengers dataframe shape: {result.get('impacted_passengers', pd.DataFrame()).shape}")
-    print(f"Alternative flights dataframe shape: {result.get('alternative_flights', pd.DataFrame()).shape}")
+    print(f"Impacted passengers count: {len(result.get('impacted_passengers', []))}")
+    print(f"Alternative flights count: {len(result.get('alternative_flights', []))}")
     print(f"Number of rebooking proposals: {len(result.get('rebooking_proposals', []))}")
     
     if result.get('llm_analysis'):

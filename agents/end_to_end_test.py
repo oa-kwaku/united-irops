@@ -42,7 +42,7 @@ def run_end_to_end_test_with_langgraph():
     # Define the nodes for the graph
     def propose_rebooking_node(state: SystemState) -> SystemState:
         print("\n--- Step 1: LLM Agent Generating Rebooking Proposals ---")
-        return llm_passenger_rebooking_agent(state, db_path="../database/united_ops.db") # type: ignore
+        return llm_passenger_rebooking_agent(state) # type: ignore
 
     def confirmation_node(state: SystemState) -> SystemState:
         print("\n--- Step 2: Collecting Passenger Confirmations ---")
@@ -72,7 +72,7 @@ def run_end_to_end_test_with_langgraph():
         print("\n--- Step 3: Updating Passenger Records in Database ---")
         # The llm_passenger_rebooking_agent will POP 'confirmations', so we save them for verification
         confirmations_to_verify = state.get("confirmations", [])
-        new_state = llm_passenger_rebooking_agent(state, db_path="../database/united_ops.db") # type: ignore
+        new_state = llm_passenger_rebooking_agent(state) # type: ignore
         new_state["confirmations_for_verification"] = confirmations_to_verify
         return new_state # type: ignore
 
