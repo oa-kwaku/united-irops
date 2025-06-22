@@ -243,8 +243,13 @@ def save_summary_to_markdown(summary_text: Union[str, List[str], dict], run_id: 
         summary_text (Union[str, List[str], dict]): The summary content.
         run_id (str): Unique run ID used in the filename.
     """
-    os.makedirs("outputs", exist_ok=True)
-    filename = f"outputs/summary_{run_id}.md"
+    # Get the project root directory (two levels up from agents/)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    outputs_dir = os.path.join(project_root, "outputs")
+    
+    os.makedirs(outputs_dir, exist_ok=True)
+    filename = os.path.join(outputs_dir, f"summary_{run_id}.md")
 
     # Extract raw text
     if isinstance(summary_text, dict) and "text" in summary_text:
@@ -366,6 +371,11 @@ def generate_executive_summary(state: Dict[str, Any], run_id: str) -> Dict[str, 
     """
     Generates the final executive summary when workflow is complete.
     """
+    # Guard against multiple executions
+    if state.get("workflow_complete", False):
+        print("📋 Executive summary already generated - skipping duplicate execution")
+        return state
+    
     print("📋 Generating final executive summary...")
     
     # Prepare a formatted string for crew substitutions
@@ -450,7 +460,7 @@ Customer Rebooking Information:
     ])
 
     agent = create_tool_calling_agent(llm=llm, tools=tools, prompt=prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False)
 
     print(f"🧾 Using run_id = {run_id} to fetch messages from DB")
 

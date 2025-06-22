@@ -203,8 +203,7 @@ def create_intelligent_routing_demo():
         return state
     
     def database_update_node(state: Dict[str, Any]) -> Dict[str, Any]:
-        print("\n💾 DATABASE UPDATE")
-        print("Updating passenger records in database...")
+        print("\n�� DATABASE UPDATE")
         
         # Save confirmations for verification before they get processed
         confirmations_to_verify = state.get("confirmations", [])
@@ -215,7 +214,7 @@ def create_intelligent_routing_demo():
             from agents.llm_passenger_rebooking_agent import update_passenger_records
             
             # Show progress message
-            print(f"Updating {len(confirmations_to_verify)} passenger records in database...")
+            print(f"🗄️ MCP Client: Updating {len(confirmations_to_verify)} passenger records in database...")
             
             # Update the database with confirmed rebookings
             updated_count = update_passenger_records.invoke({"confirmations": confirmations_to_verify})

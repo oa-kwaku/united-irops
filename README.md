@@ -1,96 +1,95 @@
 # United Airlines Hackathon - Multi-Agent Operations System
 
-A sophisticated multi-agent system for handling United Airlines flight operations, including passenger rebooking, crew management, and dispatch operations.
+A sophisticated multi-agent system for handling United Airlines flight operations, including intelligent routing, passenger rebooking, crew management, and dispatch operations.
 
-## Quick Start
+## Key Features
 
-### 1. Start the Services
+- **Intelligent Routing**: Dynamic workflow sequencing based on operational conditions
+- **Weather Alert Integration**: Real-time weather impact assessment
+- **FAA Compliance**: Automated crew legality checks with human approval
+- **Smart Passenger Rebooking**: Loyalty-tier based reassignment when flights are cancelled, with integrated customer confirmations
+- **MCP Architecture**: Seamless database and communication integration
 
-You need to run two services in separate terminals:
+## Getting Started
 
-**Terminal 1 - Passenger Communications Server:**
-```bash
-cd services
-python passenger_communications_http_server.py
-```
-This starts the passenger communications MCP server on port 8000.
+For detailed setup and running instructions, see the [Quick Start Guide](quickstart_guide.md).
 
-**Terminal 2 - Database Server:**
-```bash
-cd services
-python database_http_server.py
-```
-This starts the database MCP server on port 8001.
+## System Overview
 
-### 2. Run Tests
+The system consists of five core agents that work together to handle flight disruptions:
 
-Navigate to the agents folder and run any of the test files:
+### Core Agents
 
-```bash
-cd agents
-```
+1. **`planner_agent.py`** - **Intelligent Routing & Executive Planner Agent**
+   - **Intelligent Workflow Routing**: Dynamically determines optimal agent execution sequence based on operational conditions
+   - **Condition-Based Sequencing**: Routes based on weather alerts, crew issues, and flight cancellations
+   - **State Management**: Tracks workflow progress and agent completion status
+   - **Executive Summaries**: Generates comprehensive reports with both Operations and Customer Rebooking sections
+   - **Human-in-the-Loop**: Provides approval steps for critical decisions
+   - **Database Integration**: Reads all agent activity logs for comprehensive reporting
 
-## Test Files
+2. **`crew_ops_agent.py`** - Crew Operations Agent
+   - Handles FAA compliance checks
+   - Identifies crew violations (duty hours, rest periods, fatigue)
+   - Proposes legal crew substitutions with human-in-the-loop approval
+   - Logs all actions for audit purposes
 
-### 1. `rebooking_end_to_end_test.py`
-**Purpose:** Complete end-to-end passenger rebooking workflow
-- Simulates a flight cancellation
-- Finds alternative flights
-- Assigns passengers based on loyalty tiers
-- Sends rebooking proposals to passengers
-- Processes passenger confirmations
-- Updates database with final assignments
+3. **`dispatch_ops_agent.py`** - Dispatch Operations Agent
+   - Evaluates overall dispatch readiness
+   - Checks crew legality, weather conditions, and fuel status
+   - Provides go/no-go decision for flight dispatch
+   - Identifies specific violations that need resolution
+   - Publishes delay advisories for weather-affected flights
 
-### 2. `multi_agent_workflow_test.py`
-**Purpose:** Tests the new United Airlines operations agents
-- Runs FAA compliance checks for crew
-- Performs dispatch readiness evaluations
-- Generates executive summaries
-- Tests the complete multi-agent workflow
+4. **`llm_passenger_rebooking_agent.py`** - Passenger Rebooking Agent
+   - Analyzes flight cancellation scenarios
+   - Makes intelligent passenger assignments based on loyalty tiers
+   - Handles edge cases and special circumstances
+   - Updates passenger records in database
+   - Includes fallback mechanisms for LLM failures
 
-### 3. `simple_test_multi_agent_workflow.py`
-**Purpose:** Simplified test of the multi-agent system
-- Basic workflow testing without complex scenarios
-- Good for initial system validation
-- Faster execution for development
+5. **`confirmation_agent.py`** - Confirmation Agent
+   - Sends rebooking proposals to passengers via MCP
+   - Collects passenger responses in batches
+   - Processes confirmations for database updates
+   - Manages communication timing and retry logic
+   - Provides human-friendly example messages
 
-## Agents Overview
+### Supporting Services
 
-### Core Rebooking Agents
+6. **Database Services** (`services/`)
+   - **`database_mcp_server.py`** - Core MCP server for database operations
+   - **`database_http_server.py`** - HTTP wrapper for database MCP server (Port 8001)
+   - **`database_mcp_client.py`** - HTTP client for database operations
+   - Manages passenger records, crew schedules, and flight data
+   - Provides agent activity logging and audit trails
 
-**`llm_passenger_rebooking_agent.py`**
-- Intelligent passenger rebooking using Claude AI
-- Analyzes flight cancellations and finds alternatives
-- Assigns passengers based on loyalty tiers and preferences
-- Handles edge cases and provides explanations
+7. **Passenger Communications Services** (`services/`)
+   - **`passenger_communications_mcp_server.py`** - Core MCP server for passenger communications
+   - **`passenger_communications_http_server.py`** - HTTP wrapper for passenger communications (Port 8000)
+   - **`passenger_communications_mcp_client.py`** - HTTP client for passenger communications
+   - Handles rebooking proposal distribution and response collection
+   - Manages communication timing and retry logic
 
-**`confirmation_agent.py`**
-- Manages passenger communications
-- Sends rebooking proposals to passengers
-- Collects and processes passenger responses
-- Handles batch processing for efficiency
+8. **Database Management** (`database/`)
+   - **`united_ops.db`** - SQLite database with flight, passenger, and crew data
+   - **`restore_database_full.py`** - Cleanup utility for database restoration after tests
 
-### United Airlines Operations Agents
+## Demo Files and Tests
 
-**`crew_ops_agent.py`**
-- FAA compliance monitoring for crew schedules
-- Identifies crew duty time violations
-- Proposes legal crew substitutions
-- Ensures regulatory compliance
+### 1. `agents/demo_scenario.py` - **Main Demo (Recommended)**
+**Purpose:** Complete intelligent routing system demonstration
+- **Intelligent Workflow Routing**: Dynamically sequences agents based on operational conditions
+- **Weather Alert Handling**: Processes thunderstorms and fog conditions
+- **Crew Compliance**: FAA violation detection with human-in-the-loop approval
+- **Passenger Rebooking**: Loyalty-based assignment with alternative flights
+- **Executive Summary**: Comprehensive Operations and Customer Rebooking reports
+- **Professional Output**: Clean console output with minimal debug statements
 
-**`dispatch_ops_agent.py`**
-- Pre-flight dispatch readiness checks
-- Evaluates crew legality, weather, and fuel status
-- Provides overall dispatch approval
-- Identifies potential operational issues
+### Additional Tests
+For detailed information about the test suite, including end-to-end rebooking tests, multi-agent workflow tests, and intelligent routing validation, see the [agents/README.md](agents/README.md) file.
 
-**`planner_agent.py`**
-- Generates executive summaries of operations
-- Reads system-wide activity logs
-- Provides human-in-the-loop approval
-- Creates comprehensive operational reports
-
-### System Architecture
+## System Architecture
 
 The system uses a modular architecture with:
 - **MCP (Model Context Protocol)** servers for database and communications
@@ -98,30 +97,14 @@ The system uses a modular architecture with:
 - **Claude AI** for intelligent decision making
 - **SQLite** database for data persistence
 
-### Key Features
+## Communication Flow
 
-- **Intelligent Rebooking:** AI-powered passenger assignment based on loyalty tiers
-- **FAA Compliance:** Automated crew legality checking and substitution
-- **Dispatch Operations:** Comprehensive pre-flight readiness evaluation
-- **Human-in-the-Loop:** Executive approval for critical decisions
-- **Scalable Architecture:** MCP-based services for easy integration
-
-### Database Schema
-
-The system uses three main tables:
-- **passengers:** Passenger information and flight assignments
-- **flights:** Flight details and availability
-- **crew:** Crew member information and duty assignments
-
-### Communication Flow
-
-1. Flight cancellation detected
-2. LLM agent analyzes situation and finds alternatives
-3. Passengers assigned to new flights based on loyalty
-4. Confirmation agent sends proposals to passengers
-5. Responses collected and processed
-6. Database updated with final assignments
-7. Operations agents ensure compliance and readiness
-8. Executive summary generated for review
+1. **Intelligent Routing**: System analyzes operational conditions and determines workflow sequence
+2. **Weather Assessment**: Dispatch operations evaluates weather impact
+3. **Crew Compliance**: Crew operations checks FAA compliance with human approval
+4. **Flight Cancellation**: Passenger rebooking handles cancellations and finds alternatives
+5. **Passenger Communication**: Confirmation agent sends proposals and collects responses
+6. **Database Updates**: All changes are recorded in the database
+7. **Executive Summary**: Comprehensive report generated for review
 
 This system provides a complete solution for handling flight disruptions while maintaining regulatory compliance and operational efficiency. 
