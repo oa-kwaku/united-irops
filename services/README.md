@@ -20,4 +20,4 @@ This folder contains the core services for the United Airlines passenger rebooki
 The services are used by the agents in the `../agents/` folder:
 - `llm_passenger_rebooking_agent.py` uses the database client
 - `confirmation_agent.py` uses the passenger communications client
-- `end_to_end_test.py` runs the complete workflow 
+- `rebooking_end_to_end_test.py` runs the complete workflow 
