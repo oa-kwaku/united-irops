@@ -531,31 +531,29 @@ def test_database_mcp_server():
     
     # Test 2: Query passengers
     print("\n🔍 Testing query_passengers tool:")
-    result = server.execute_tool("query_passengers", {"flight_number": "DL7016", "limit": 5})
-    print(f"  Result: {result}")
+    result = server.execute_tool("query_passengers", {"flight_number": "UA70161", "limit": 5})
+    print(f"  Query passengers result: {result}")
     
     # Test 3: Get flight details
     print("\n✈️ Testing get_flight_details tool:")
-    result = server.execute_tool("get_flight_details", {"flight_number": "DL7016"})
-    print(f"  Result: {result}")
+    result = server.execute_tool("get_flight_details", {"flight_number": "UA70161"})
+    print(f"  Get flight details result: {result}")
     
     # Test 4: Get available seats
     print("\n💺 Testing get_available_seats tool:")
-    result = server.execute_tool("get_available_seats", {"flight_number": "DL7016"})
-    print(f"  Result: {result}")
+    result = server.execute_tool("get_available_seats", {"flight_number": "UA70161"})
+    print(f"  Get available seats result: {result}")
     
     # Test 5: Get passenger count
     print("\n👥 Testing get_passenger_count tool:")
-    result = server.execute_tool("get_passenger_count", {"flight_number": "DL7016"})
-    print(f"  Result: {result}")
+    result = server.execute_tool("get_passenger_count", {"flight_number": "UA70161"})
+    print(f"  Get passenger count result: {result}")
     
-    print("\n✅ Database MCP Server test completed!")
-    print("\n📋 Usage Examples:")
-    print("  - Query passengers on flight: {'flight_number': 'DL7016', 'limit': 10}")
-    print("  - Get flight details: {'flight_number': 'DL7016'}")
-    print("  - Update passenger flight: {'passenger_id': 'PAX001', 'new_flight': 'UA200'}")
-    print("  - Get available seats: {'flight_number': 'DL7016'}")
-    print("  - Get passenger count: {'flight_number': 'DL7016'}")
+    print("\nExample tool calls:")
+    print("  - Query passengers on flight: {'flight_number': 'UA70161', 'limit': 10}")
+    print("  - Get flight details: {'flight_number': 'UA70161'}")
+    print("  - Get available seats: {'flight_number': 'UA70161'}")
+    print("  - Get passenger count: {'flight_number': 'UA70161'}")
 
 if __name__ == "__main__":
     test_database_mcp_server() 

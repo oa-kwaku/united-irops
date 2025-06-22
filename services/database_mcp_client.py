@@ -294,32 +294,32 @@ def test_database_client():
     
     # Test 2: Query passengers
     print("\n🔍 Testing query_passengers:")
-    passengers = client.query_passengers(flight_number="DL7016", limit=5)
-    print(f"  Found {len(passengers)} passengers on flight DL7016")
+    passengers = client.query_passengers(flight_number="UA70161", limit=5)
+    print(f"  Found {len(passengers)} passengers on flight UA70161")
     
     # Test 3: Get flight details
     print("\n✈️ Testing get_flight_details:")
-    flight_details = client.get_flight_details("DL7016")
+    flight_details = client.get_flight_details("UA70161")
     if flight_details.get("success"):
         details = flight_details.get("details", {})
-        print(f"  Flight DL7016: {details.get('departure_location')} → {details.get('arrival_location')}")
+        print(f"  Flight UA70161: {details.get('departure_location')} → {details.get('arrival_location')}")
         print(f"  Status: {details.get('status')}, Available seats: {details.get('available_seats')}")
     else:
         print(f"  Error: {flight_details.get('error', 'Unknown error')}")
     
     # Test 4: Get available seats
     print("\n💺 Testing get_available_seats:")
-    seats_info = client.get_available_seats("DL7016")
+    seats_info = client.get_available_seats("UA70161")
     if seats_info.get("success"):
-        print(f"  Flight DL7016: {seats_info.get('available_seats')} available seats")
+        print(f"  Flight UA70161: {seats_info.get('available_seats')} available seats")
     else:
         print(f"  Error: {seats_info.get('error', 'Unknown error')}")
     
     # Test 5: Get passenger count
     print("\n👥 Testing get_passenger_count:")
-    passenger_count = client.get_passenger_count("DL7016")
+    passenger_count = client.get_passenger_count("UA70161")
     if passenger_count.get("success"):
-        print(f"  Flight DL7016: {passenger_count.get('passenger_count')} passengers")
+        print(f"  Flight UA70161: {passenger_count.get('passenger_count')} passengers")
     else:
         print(f"  Error: {passenger_count.get('error', 'Unknown error')}")
     

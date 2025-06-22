@@ -107,7 +107,7 @@ def run_end_to_end_test_with_langgraph():
         "proposals": [],
         "messages": [],
         "flight_cancellation_notification": {
-            "flight_number": "DL7016",
+            "flight_number": "UA70161",
             "arrival_location": "ORD",
             "arrival_time": "2025-06-25 07:36:00"
         }
@@ -189,7 +189,7 @@ def run_simple_end_to_end_test():
         "proposals": [],
         "messages": [],
         "flight_cancellation_notification": {
-            "flight_number": "DL7016",
+            "flight_number": "UA70161",
             "arrival_location": "ORD",
             "arrival_time": "2025-06-25 07:36:00"
         }

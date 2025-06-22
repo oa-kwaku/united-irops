@@ -528,7 +528,7 @@ def test_llm_agent():
     
     # Sample flight cancellation notification
     test_cancellation = {
-        "flight_number": "DL7016",
+        "flight_number": "UA70161",
         "arrival_location": "ORD", 
         "arrival_time": "2025-06-25 07:36:00"
     }

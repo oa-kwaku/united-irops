@@ -164,7 +164,7 @@ def run_multi_agent_system(workflow_type: str = "full"):
             "DepartureFuel": "FUEL ORDER"  # Not fueled
         },
         "flight_cancellation_notification": {
-            "flight_number": "DL7016",
+            "flight_number": "UA70161",
             "arrival_location": "ORD",
             "arrival_time": "2025-06-25 07:36:00"
         }
