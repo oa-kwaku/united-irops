@@ -112,38 +112,60 @@ def get_unassigned_crew_from_db(input: Dict[str, Any] = None) -> List[Dict[str, 
     Can be invoked with no parameters.
 
     Crew must have:
-    - No current flight assignment (assigned_flight IS NULL)
+    - No current flight assignment (assigned_flight IS NULL or "UNASSIGNED")
     - Rest hours >= MIN_REST_HOURS
     - Fatigue score <= MAX_FATIGUE_SCORE
     """
     try:
         db_client = get_database_client_instance()
         
-        # Query crew with the specified criteria
-        crew_data = db_client.query_crew(
-            assigned_flight=None,  # Unassigned crew
-            min_rest_hours=MIN_REST_HOURS,
-            max_fatigue_score=MAX_FATIGUE_SCORE
-        )
-        
-        return crew_data
+        # Try to use the MCP client first
+        try:
+            crew_data = db_client.query_crew(
+                assigned_flight=None,  # This will now look for NULL or "UNASSIGNED"
+                min_rest_hours=MIN_REST_HOURS,
+                max_fatigue_score=MAX_FATIGUE_SCORE
+            )
+            print(f"📋 Found {len(crew_data)} unassigned crew members via MCP")
+            return crew_data
+            
+        except AttributeError:
+            # MCP client doesn't have query_crew method yet, fallback to direct SQLite
+            import sqlite3
+            print("🔄 Database MCP not available - Falling back to direct SQLite connection...")
+            conn = sqlite3.connect("../database/united_ops.db")
+            query = """
+                SELECT crew_id, name, base, rest_hours_prior, fatigue_score, role
+                FROM crew
+                WHERE (assigned_flight IS NULL OR assigned_flight = 'UNASSIGNED')
+                  AND rest_hours_prior >= ?
+                  AND fatigue_score <= ?
+            """
+            df = pd.read_sql_query(query, conn, params=[MIN_REST_HOURS, MAX_FATIGUE_SCORE])
+            conn.close()
+            crew_data = df.to_dict(orient="records")
+            print(f"📋 Found {len(crew_data)} unassigned crew members via direct SQLite")
+            return crew_data
         
     except Exception as e:
-        print(f"⚠️ Initial attempt failed: {e}")
+        print(f"⚠️ Error getting unassigned crew: {e}")
         
-        # Fallback: try to get all crew and filter in memory
+        # Final fallback: try to get all crew and filter in memory
         try:
-            db_client = get_database_client_instance()
-            all_crew = db_client.query_crew()
+            import sqlite3
+            conn = sqlite3.connect("../database/united_ops.db")
+            df = pd.read_sql_query("SELECT * FROM crew", conn)
+            conn.close()
             
-            # Filter in memory
+            # Filter in memory for unassigned crew
             unassigned_crew = [
-                crew for crew in all_crew
-                if crew.get('assigned_flight') is None
+                crew for crew in df.to_dict(orient="records")
+                if (crew.get('assigned_flight') is None or crew.get('assigned_flight') == 'UNASSIGNED')
                 and crew.get('rest_hours_prior', 0) >= MIN_REST_HOURS
                 and crew.get('fatigue_score', 1.0) <= MAX_FATIGUE_SCORE
             ]
             
+            print(f"📋 Found {len(unassigned_crew)} unassigned crew members via fallback")
             return unassigned_crew
             
         except Exception as fallback_error:
@@ -204,16 +226,22 @@ def get_full_schedule_from_db(input: Dict[str, Any] = None) -> List[Dict[str, An
     try:
         db_client = get_database_client_instance()
         
-        # Query all crew with duty assignments
-        crew_data = db_client.query_crew(has_duty_assignment=True)
-        
-        # Convert datetime fields
-        for crew in crew_data:
-            for field in ['duty_start', 'duty_end', 'last_flight_end']:
-                if crew.get(field):
-                    crew[field] = pd.to_datetime(crew[field])
-        
-        return crew_data
+        # Try to use the MCP client first
+        try:
+            crew_data = db_client.query_crew()
+            print(f"📋 Retrieved {len(crew_data)} crew members from database via MCP")
+            return crew_data
+            
+        except AttributeError:
+            # MCP client doesn't have query_crew method yet, fallback to direct SQLite
+            import sqlite3
+            print("🔄 Database MCP not available - Falling back to direct SQLite connection...")
+            conn = sqlite3.connect("../database/united_ops.db")
+            df = pd.read_sql_query("SELECT * FROM crew", conn)
+            conn.close()
+            crew_data = df.to_dict(orient="records")
+            print(f"📋 Retrieved {len(crew_data)} crew members from database via direct SQLite")
+            return crew_data
         
     except Exception as e:
         print(f"⚠️ Error getting crew schedule: {e}")
@@ -232,6 +260,9 @@ def crew_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     print("🧑‍✈️ Claude CrewOpsAgent activated")
     state.setdefault("messages", []).append("Claude CrewOpsAgent analyzing FAA legality")
 
+    # Get run_id from state for logging
+    run_id = state.get("run_id", "default")
+
     # Initialize the LLM agent
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -244,7 +275,7 @@ def crew_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         stop=None
     )
     
-    tools = [check_legality_tool, get_unassigned_crew_from_db, propose_substitutes_tool, log_message_tool]
+    tools = [check_legality_tool, get_unassigned_crew_from_db, propose_substitutes_tool, log_message_tool, get_full_schedule_from_db]
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", 
@@ -262,39 +293,96 @@ def crew_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     agent = create_tool_calling_agent(llm=llm, tools=tools, prompt=prompt)
     agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
 
+    # Check if we have crew schedule in state first
     crew_schedule_df = state.get("crew_schedule", pd.DataFrame())
-
-    try:
-        result = agent_executor.invoke({
-            "input": "Begin compliance review using FAA rules. Load crew schedule from the database and resolve any violations."
-        })
-
-        # If output is not a dict, extract it safely
-        if isinstance(result, dict):
-            substitutions = result
-        else:
-            substitutions = result.get("output", {})
-
-    except Exception as e:
-        print(f"⚠️ Initial attempt failed: {e}")
-        state.setdefault("messages", []).append(f"CrewOpsAgent: Initial tool call failed, retrying manually")
-
-        # Manual fallback
+    
+    if not crew_schedule_df.empty:
+        print("📋 Using crew schedule from state")
         try:
-            # Retry: Run legality and substitutions directly
-            crew_schedule = get_full_schedule_from_db({})
+            # Convert DataFrame to list of dictionaries if needed
+            if hasattr(crew_schedule_df, 'to_dict'):
+                crew_schedule = crew_schedule_df.to_dict('records')
+            else:
+                crew_schedule = crew_schedule_df
+            
+            print(f"📋 Crew schedule has {len(crew_schedule)} members")
+            print(f"📋 First crew member fields: {list(crew_schedule[0].keys()) if crew_schedule else 'No crew'}")
+            
+            # Run legality check on state crew schedule
             violations = check_legality_tool.invoke({"crew_schedule": crew_schedule})
-            unassigned_crew = get_unassigned_crew_from_db({})
-            substitutions = propose_substitutes_tool.invoke({
-                "violations": violations, 
-                "crew_schedule": crew_schedule, 
-                "unassigned_crew": unassigned_crew
-            })
-
-        except Exception as e2:
-            print(f"❌ Fallback also failed: {e2}")
-            state.setdefault("messages", []).append("CrewOpsAgent failed to resolve substitutions")
-            return state
+            print(f"📋 Found {len(violations)} violations: {violations}")
+            
+            unassigned_crew = get_unassigned_crew_from_db.invoke({})
+            print(f"📋 Found {len(unassigned_crew)} unassigned crew")
+            
+            if violations and unassigned_crew:
+                substitutions = propose_substitutes_tool.invoke({
+                    "violations": violations, 
+                    "crew_schedule": crew_schedule, 
+                    "unassigned_crew": unassigned_crew
+                })
+                print(f"📋 Generated {len(substitutions)} substitutions")
+            else:
+                substitutions = {}
+                print(f"📋 No substitutions possible - violations: {len(violations)}, unassigned: {len(unassigned_crew)}")
+            
+            # Always set legality flags if violations were found
+            if violations:
+                state.setdefault("legality_flags", []).extend(violations)
+                print(f"📋 Set legality flags: {violations}")
+            
+        except Exception as e:
+            print(f"❌ State crew schedule processing failed: {e}")
+            import traceback
+            traceback.print_exc()
+            substitutions = {}
+    else:
+        # Only query database if no state schedule is available
+        print("📋 No crew schedule in state, querying database...")
+        try:
+            # Get the complete crew schedule from database
+            full_crew_schedule = get_full_schedule_from_db.invoke({})
+            
+            if full_crew_schedule:
+                print(f"📋 Retrieved {len(full_crew_schedule)} crew members from database")
+                
+                # Load the full schedule to state for other agents to use
+                state["crew_schedule"] = pd.DataFrame(full_crew_schedule)
+                
+                # Run comprehensive legality check on the full schedule
+                violations = check_legality_tool.invoke({"crew_schedule": full_crew_schedule})
+                print(f"📋 Found {len(violations)} violations across all flights: {violations}")
+                
+                # Get unassigned crew for potential substitutions
+                unassigned_crew = get_unassigned_crew_from_db.invoke({})
+                print(f"📋 Found {len(unassigned_crew)} unassigned crew available for substitution")
+                
+                # Generate substitutions for all violations
+                if violations and unassigned_crew:
+                    substitutions = propose_substitutes_tool.invoke({
+                        "violations": violations, 
+                        "crew_schedule": full_crew_schedule, 
+                        "unassigned_crew": unassigned_crew
+                    })
+                    print(f"📋 Generated substitutions for {len(substitutions)} flights")
+                else:
+                    substitutions = {}
+                    print(f"📋 No substitutions possible - violations: {len(violations)}, unassigned: {len(unassigned_crew)}")
+                
+                # Set legality flags for all violations found
+                if violations:
+                    state.setdefault("legality_flags", []).extend(violations)
+                    print(f"📋 Set legality flags for {len(violations)} flights with violations")
+                
+            else:
+                print("⚠️ No crew data found in database")
+                state.setdefault("messages", []).append("CrewOpsAgent: No crew data found in database")
+                substitutions = {}
+                
+        except Exception as e:
+            print(f"❌ Database query failed: {e}")
+            state.setdefault("messages", []).append(f"CrewOpsAgent: Database query failed - {str(e)}")
+            substitutions = {}
 
     for flight_id, crew_list in substitutions.items():
         state.setdefault("crew_substitutions", {})[flight_id] = crew_list
@@ -311,8 +399,18 @@ def crew_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         else:
             state.setdefault("messages", []).append(f"CrewOpsAgent: No substitute available for flight {flight_id}")
 
-    state.setdefault("legality_flags", []).extend(list(substitutions.keys()))
     state["messages"].append("Claude CrewOpsAgent completed analysis")
+    
+    # Log final status with run_id
+    try:
+        log_message_tool.invoke({
+            "agent_name": "CrewOpsAgent", 
+            "message": f"Completed crew operations analysis. Found {len(substitutions)} substitutions needed.",
+            "run_id": run_id
+        })
+    except Exception as e:
+        print(f"⚠️ Failed to log message: {e}")
+    
     print("🧾 Messages before planner:", state.get("messages", []))
 
     # === Human-in-the-Loop Review of Substitutions ===

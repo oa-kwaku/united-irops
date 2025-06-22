@@ -144,8 +144,16 @@ def planner_agent(state: Dict[str, Any], run_id: str = "default") -> Dict[str, A
 
     print(f"🧾 Using run_id = {run_id} to fetch messages from DB")
 
+    # Get messages directly first to ensure we have the right run_id
+    try:
+        messages = read_messages_tool.invoke({"run_id": run_id})
+        print(f"📋 Retrieved messages for run_id {run_id}: {len(messages)} characters")
+    except Exception as e:
+        print(f"⚠️ Failed to get messages: {e}")
+        messages = f"No messages found for run_id: {run_id}"
+
     result = agent_executor.invoke({
-        "input": "Generate an executive-level summary of all actions and changes from system agents.",
+        "input": f"Generate an executive-level summary of all actions and changes from system agents. Use the following message log:\n\n{messages}",
         "run_id": run_id
     })
 

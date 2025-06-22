@@ -274,7 +274,8 @@ class UnitedAirlinesDatabaseMCPServer:
             
             if "assigned_flight" in params:
                 if params["assigned_flight"] is None:
-                    query += " AND assigned_flight IS NULL"
+                    # Look for unassigned crew (either NULL or "UNASSIGNED")
+                    query += " AND (assigned_flight IS NULL OR assigned_flight = 'UNASSIGNED')"
                 else:
                     query += " AND assigned_flight = ?"
                     query_params.append(params["assigned_flight"])

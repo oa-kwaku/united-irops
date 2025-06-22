@@ -56,7 +56,7 @@ def get_unassigned_crew_from_db() -> List[Dict[str, Any]]:
         # Try to use the MCP client first
         try:
             crew_data = db_client.query_crew(
-                assigned_flight=None,  # Unassigned crew
+                assigned_flight=None,  # This will now look for NULL or "UNASSIGNED"
                 min_rest_hours=MIN_REST_HOURS,
                 max_fatigue_score=MAX_FATIGUE_SCORE
             )
@@ -69,7 +69,7 @@ def get_unassigned_crew_from_db() -> List[Dict[str, Any]]:
             query = """
                 SELECT crew_id, name, base, rest_hours_prior, fatigue_score, role
                 FROM crew
-                WHERE assigned_flight IS NULL
+                WHERE (assigned_flight IS NULL OR assigned_flight = 'UNASSIGNED')
                   AND rest_hours_prior >= ?
                   AND fatigue_score <= ?
             """
@@ -87,10 +87,10 @@ def get_unassigned_crew_from_db() -> List[Dict[str, Any]]:
             df = pd.read_sql_query("SELECT * FROM crew", conn)
             conn.close()
             
-            # Filter in memory
+            # Filter in memory for unassigned crew
             unassigned_crew = [
                 crew for crew in df.to_dict(orient="records")
-                if crew.get('assigned_flight') is None
+                if (crew.get('assigned_flight') is None or crew.get('assigned_flight') == 'UNASSIGNED')
                 and crew.get('rest_hours_prior', 0) >= MIN_REST_HOURS
                 and crew.get('fatigue_score', 1.0) <= MAX_FATIGUE_SCORE
             ]
@@ -171,19 +171,189 @@ def check_faa_legality_compliance(state: Dict[str, Any]) -> bool:
         state.setdefault("messages", []).append(f"FAA legality check failed: {e}")
         return False
 
-# Weather risk detection
-def detect_weather_risks(departure_weather: Dict[str, str]) -> Dict[str, str]:
+# Weather risk detection with time windows
+def detect_weather_risks(departure_weather: Dict[str, Any]) -> Dict[str, Any]:
     """
     Detect weather risks that could cause delays.
+    Enhanced to handle time windows and return structured weather alerts.
+    
+    Expected input format:
+    {
+        "DepartureWeather": ["TS", "FG"],
+        "weather_start_time": "2025-06-25 14:00:00",
+        "weather_end_time": "2025-06-25 18:00:00",
+        "airport": "ORD"
+    }
     """
     metar = departure_weather.get("DepartureWeather", [])
+    start_time = departure_weather.get("weather_start_time")
+    end_time = departure_weather.get("weather_end_time")
+    airport = departure_weather.get("airport", "ORD")
 
     delay_codes = {
         "TS": "Thunderstorm in vicinity (delay expected)",
         "FG": "Fog reported (delay expected)",
         "SN": "Snow present at departure (delay expected)",
     }
-    return {code: msg for code, msg in delay_codes.items() if code in metar}
+    
+    weather_risks = {code: msg for code, msg in delay_codes.items() if code in metar}
+    
+    if weather_risks:
+        return {
+            "weather_codes": list(weather_risks.keys()),
+            "weather_messages": weather_risks,
+            "start_time": start_time,
+            "end_time": end_time,
+            "airport": airport,
+            "has_weather_risk": True
+        }
+    else:
+        return {
+            "weather_codes": [],
+            "weather_messages": {},
+            "start_time": start_time,
+            "end_time": end_time,
+            "airport": airport,
+            "has_weather_risk": False
+        }
+
+# Query database for flights affected by weather
+def get_flights_affected_by_weather(weather_alert: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Query the database to find flights departing from or arriving at the affected airport
+    during the weather alert time window.
+    
+    Args:
+        weather_alert: Dictionary containing weather alert information with time windows
+        
+    Returns:
+        List of flights affected by the weather conditions
+    """
+    try:
+        db_client = get_database_client_instance()
+        
+        airport = weather_alert.get("airport", "ORD")
+        start_time = weather_alert.get("start_time")
+        end_time = weather_alert.get("end_time")
+        
+        if not start_time or not end_time:
+            print("⚠️ Weather alert missing time windows, cannot query affected flights")
+            return []
+        
+        print(f"🔍 Querying flights at {airport} between {start_time} and {end_time}")
+        
+        # Query flights departing from the affected airport
+        departing_flights = db_client.query_flights(departure_location=airport)
+        
+        # Query flights arriving at the affected airport
+        arriving_flights = db_client.query_flights(arrival_location=airport)
+        
+        # Combine all flights
+        all_flights = departing_flights + arriving_flights
+        
+        # Filter flights by time window
+        from datetime import datetime
+        start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+        end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        
+        affected_flights = []
+        for flight in all_flights:
+            # Check departure time if this is a departing flight
+            if flight.get('departure_location') == airport and flight.get('departure_time'):
+                try:
+                    flight_departure = datetime.fromisoformat(flight['departure_time'].replace('Z', '+00:00'))
+                    if start_dt <= flight_departure <= end_dt:
+                        flight['weather_impact'] = 'departure_delay'
+                        affected_flights.append(flight)
+                except Exception as e:
+                    print(f"⚠️ Could not parse departure time for flight {flight.get('flight_number')}: {e}")
+            
+            # Check arrival time if this is an arriving flight
+            elif flight.get('arrival_location') == airport and flight.get('arrival_time'):
+                try:
+                    flight_arrival = datetime.fromisoformat(flight['arrival_time'].replace('Z', '+00:00'))
+                    if start_dt <= flight_arrival <= end_dt:
+                        flight['weather_impact'] = 'arrival_delay'
+                        affected_flights.append(flight)
+                except Exception as e:
+                    print(f"⚠️ Could not parse arrival time for flight {flight.get('flight_number')}: {e}")
+        
+        # Remove duplicates based on flight_number
+        seen_flights = set()
+        unique_flights = []
+        for flight in affected_flights:
+            if flight['flight_number'] not in seen_flights:
+                seen_flights.add(flight['flight_number'])
+                unique_flights.append(flight)
+        
+        print(f"📊 Found {len(unique_flights)} flights affected by weather at {airport}")
+        
+        return unique_flights
+        
+    except Exception as e:
+        print(f"❌ Error querying affected flights: {e}")
+        return []
+
+# Enhanced weather analysis with flight impact assessment
+def analyze_weather_impact(weather_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Comprehensive weather analysis including affected flights.
+    
+    Args:
+        weather_data: Weather data with time windows and airport information
+        
+    Returns:
+        Dictionary containing weather analysis and affected flights
+    """
+    # Detect weather risks
+    weather_alert = detect_weather_risks(weather_data)
+    
+    if weather_alert.get("has_weather_risk"):
+        # Query affected flights
+        affected_flights = get_flights_affected_by_weather(weather_alert)
+        
+        # Calculate impact metrics
+        departure_delays = [f for f in affected_flights if f.get('weather_impact') == 'departure_delay']
+        arrival_delays = [f for f in affected_flights if f.get('weather_impact') == 'arrival_delay']
+        
+        impact_summary = {
+            "total_affected_flights": len(affected_flights),
+            "departure_delays": len(departure_delays),
+            "arrival_delays": len(arrival_delays),
+            "affected_airport": weather_alert.get("airport"),
+            "weather_duration_hours": None  # Will calculate if times are provided
+        }
+        
+        # Calculate weather duration if times are provided
+        if weather_alert.get("start_time") and weather_alert.get("end_time"):
+            try:
+                from datetime import datetime
+                start_dt = datetime.fromisoformat(weather_alert["start_time"].replace('Z', '+00:00'))
+                end_dt = datetime.fromisoformat(weather_alert["end_time"].replace('Z', '+00:00'))
+                duration = (end_dt - start_dt).total_seconds() / 3600
+                impact_summary["weather_duration_hours"] = round(duration, 1)
+            except Exception as e:
+                print(f"⚠️ Could not calculate weather duration: {e}")
+        
+        return {
+            "weather_alert": weather_alert,
+            "affected_flights": affected_flights,
+            "impact_summary": impact_summary,
+            "has_weather_risk": True
+        }
+    else:
+        return {
+            "weather_alert": weather_alert,
+            "affected_flights": [],
+            "impact_summary": {
+                "total_affected_flights": 0,
+                "departure_delays": 0,
+                "arrival_delays": 0,
+                "affected_airport": weather_alert.get("airport"),
+                "weather_duration_hours": 0
+            },
+            "has_weather_risk": False
+        }
 
 # Fuel readiness check
 def detect_fuel_capacity(departure_fuel: Dict[str, Any]) -> Dict[str, str]:
@@ -217,26 +387,62 @@ def dispatch_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     print("🛰️ DispatchOpsAgent activated")
     state.setdefault("messages", []).append("DispatchOpsAgent checking dispatch readiness")
 
+    # Get run_id from state for logging
+    run_id = state.get("run_id", "default")
+
     # Initialize
     violations = {}
     crew_legality_status = "GREEN"
     weather_status = "GREEN"
     fuel_status = "GREEN"
 
-    # ✅ Crew legality check (with substitution fallback)
-    if not check_faa_legality_compliance(state):
+    # ✅ Crew legality check - use results from crew ops agent if available
+    crew_substitutions = state.get("crew_substitutions", {})
+    legality_flags = state.get("legality_flags", [])
+    
+    if legality_flags and not crew_substitutions:
+        # Crew ops found violations but no substitutions available
         crew_legality_status = "EXCEPTION"
         violations["CREW_LEGALITY"] = "FAA legality failed and no substitution was possible."
+        state["messages"].append("Crew legality: ❌ Violations found but no substitutions available")
+    elif legality_flags and crew_substitutions:
+        # Crew ops found violations and provided substitutions
+        crew_legality_status = "GREEN"  # Substitutions available
+        state["messages"].append("Crew legality: ✅ Substitutions available")
     else:
+        # No violations found
+        crew_legality_status = "GREEN"
         state["messages"].append("Crew legality: ✅ Passed")
 
-    # 🌤️ Weather risk check
-    weather_risks = detect_weather_risks(state.get("weather_data", {}))
-    if weather_risks:
+    # 🌤️ Weather risk check - Enhanced with time windows and affected flights
+    weather_analysis = analyze_weather_impact(state.get("weather_data", {}))
+    
+    if weather_analysis.get("has_weather_risk"):
         weather_status = "EXCEPTION"
-        violations.update(weather_risks)
+        
+        # Add weather violations to the violations dict
+        weather_alert = weather_analysis["weather_alert"]
+        weather_messages = weather_alert.get("weather_messages", {})
+        violations.update(weather_messages)
+        
+        # Add affected flights to state
+        state["weather_affected_flights"] = weather_analysis["affected_flights"]
+        state["weather_impact_summary"] = weather_analysis["impact_summary"]
+        
+        # Log weather impact
+        impact_summary = weather_analysis["impact_summary"]
+        state["messages"].append(
+            f"Weather alert: {len(weather_alert.get('weather_codes', []))} weather conditions detected "
+            f"at {impact_summary['affected_airport']} affecting {impact_summary['total_affected_flights']} flights "
+            f"({impact_summary['departure_delays']} departures, {impact_summary['arrival_delays']} arrivals)"
+        )
+        
+        if impact_summary.get("weather_duration_hours"):
+            state["messages"].append(f"Weather expected to last {impact_summary['weather_duration_hours']} hours")
     else:
         state["messages"].append("Weather conditions: ✅ Clear")
+        state["weather_affected_flights"] = []
+        state["weather_impact_summary"] = weather_analysis["impact_summary"]
 
     # ⛽ Fuel readiness check
     fuel_issues = detect_fuel_capacity(state.get("fuel_data", {}))
@@ -257,6 +463,17 @@ def dispatch_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         "DispatchOpsAgent approved dispatch readiness." if overall_status == "GREEN"
         else "DispatchOpsAgent found dispatch violations."
     )
+
+    # Log final status with run_id
+    try:
+        from agents.crew_ops_agent import log_message_tool
+        log_message_tool.invoke({
+            "agent_name": "DispatchOpsAgent", 
+            "message": f"Dispatch status: {overall_status}. Violations: {list(violations.keys()) if violations else 'None'}",
+            "run_id": run_id
+        })
+    except Exception as e:
+        print(f"⚠️ Failed to log message: {e}")
 
     # Final result
     return {

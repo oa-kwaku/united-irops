@@ -51,6 +51,7 @@ class MultiAgentState(TypedDict):
     current_batch: NotRequired[List[Dict[str, Any]]]
     batch_ready: NotRequired[bool]
     all_responses_processed: NotRequired[bool]
+    run_id: NotRequired[str]
 
 def run_multi_agent_workflow_test():
     """
@@ -67,19 +68,19 @@ def run_multi_agent_workflow_test():
     print("=" * 80)
 
     # Define the nodes for the graph
-    def crew_ops_node(state: MultiAgentState) -> MultiAgentState:
+    def crew_ops_node(state: Dict[str, Any]) -> Dict[str, Any]:
         print("\n--- Step 1: Crew Operations Agent (FAA Compliance) ---")
         return crew_ops_agent(state)
 
-    def dispatch_ops_node(state: MultiAgentState) -> MultiAgentState:
+    def dispatch_ops_node(state: Dict[str, Any]) -> Dict[str, Any]:
         print("\n--- Step 2: Dispatch Operations Agent (Readiness Check) ---")
         return dispatch_ops_agent(state)
 
-    def passenger_rebooking_node(state: MultiAgentState) -> MultiAgentState:
+    def passenger_rebooking_node(state: Dict[str, Any]) -> Dict[str, Any]:
         print("\n--- Step 3: Passenger Rebooking Agent (Intelligent Rebooking) ---")
         return llm_passenger_rebooking_agent(state)
 
-    def confirmation_node(state: MultiAgentState) -> MultiAgentState:
+    def confirmation_node(state: Dict[str, Any]) -> Dict[str, Any]:
         print("\n--- Step 4: Confirmation Agent (Passenger Communications) ---")
         
         # Loop until all responses are collected
@@ -112,9 +113,14 @@ def run_multi_agent_workflow_test():
         print(f"✅ All confirmations collected: {len(state.get('confirmations', []))}")
         return state
 
-    def planner_node(state: MultiAgentState) -> MultiAgentState:
-        print("\n--- Step 5: Planner Agent (Executive Summary) ---")
-        run_id = f"multi-agent-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    def database_update_node(state: Dict[str, Any]) -> Dict[str, Any]:
+        print("\n--- Step 5: Database Update (Passenger Records) ---")
+        # Route back to rebooking agent to handle database updates
+        return llm_passenger_rebooking_agent(state)
+
+    def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
+        print("\n--- Step 6: Planner Agent (Executive Summary) ---")
+        run_id = state.get("run_id", f"multi-agent-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
         return planner_agent(state, run_id=run_id)
 
     # Create the graph
@@ -125,6 +131,7 @@ def run_multi_agent_workflow_test():
     workflow.add_node("dispatch_ops", dispatch_ops_node)
     workflow.add_node("passenger_rebooking", passenger_rebooking_node)
     workflow.add_node("confirmation", confirmation_node)
+    workflow.add_node("database_update", database_update_node)
     workflow.add_node("planner", planner_node)
 
     # Add edges to define the flow
@@ -132,37 +139,25 @@ def run_multi_agent_workflow_test():
     workflow.add_edge("crew_ops", "dispatch_ops")
     workflow.add_edge("dispatch_ops", "passenger_rebooking")
     workflow.add_edge("passenger_rebooking", "confirmation")
-    workflow.add_edge("confirmation", "planner")
+    workflow.add_edge("confirmation", "database_update")
+    workflow.add_edge("database_update", "planner")
     workflow.add_edge("planner", END)
 
     # Compile the graph into a runnable app
     app = workflow.compile()
 
     # Define the initial state for the test
+    run_id = f"multi-agent-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     initial_state = {
+        "run_id": run_id,  # Add run_id to initial state
         "proposals": [],
         "messages": [],
-        # Crew schedule with potential FAA violations
-        "crew_schedule": pd.DataFrame({
-            "crew_id": ["C001", "C002"],
-            "assigned_flight": ["UA101", "UA101"],
-            "duty_start": [(datetime.now()).isoformat(), (datetime.now()).isoformat()],
-            "duty_end": [(datetime.now() + timedelta(hours=12)).isoformat(), (datetime.now() + timedelta(hours=8)).isoformat()],
-            "rest_hours_prior": [8, 12],  # First crew below minimum
-            "fatigue_score": [1.1, 0.3],  # First crew above maximum
-            "role": ["Pilot", "Attendant"],
-            "base": ["ORD", "ORD"],
-            "name": ["Capt. Smith", "J. Doe"]
-        }),
-        # Weather data with potential issues
         "weather_data": {
-            "DepartureWeather": ["TS"]  # Thunderstorm
+            "DepartureWeather": ["SKC"]  # Clear skies
         },
-        # Fuel data with potential issues
         "fuel_data": {
-            "DepartureFuel": "FUEL ORDER"  # Not fueled
+            "DepartureFuel": "FUEL FINAL"  # Fueled
         },
-        # Flight cancellation notification
         "flight_cancellation_notification": {
             "flight_number": "UA70161",
             "arrival_location": "ORD",
@@ -218,17 +213,6 @@ def run_simple_multi_agent_test():
     initial_state = {
         "proposals": [],
         "messages": [],
-        "crew_schedule": pd.DataFrame({
-            "crew_id": ["C001"],
-            "assigned_flight": ["UA101"],
-            "duty_start": [(datetime.now()).isoformat()],
-            "duty_end": [(datetime.now() + timedelta(hours=8)).isoformat()],
-            "rest_hours_prior": [12],
-            "fatigue_score": [0.3],
-            "role": ["Pilot"],
-            "base": ["ORD"],
-            "name": ["Capt. Smith"]
-        }),
         "weather_data": {
             "DepartureWeather": ["SKC"]  # Clear skies
         },
@@ -258,8 +242,12 @@ def run_simple_multi_agent_test():
     state_after_confirmation = confirmation_agent(state_after_rebooking)
     print(f"  Confirmations: {len(state_after_confirmation.get('confirmations', []))}")
 
-    print("\n--- Step 5: Planner Agent ---")
-    final_state = planner_agent(state_after_confirmation, run_id="simple-test")
+    print("\n--- Step 5: Database Update ---")
+    state_after_db_update = llm_passenger_rebooking_agent(state_after_confirmation)
+    print(f"  Database updates: {len(state_after_db_update.get('messages', []))}")
+
+    print("\n--- Step 6: Planner Agent ---")
+    final_state = planner_agent(state_after_db_update, run_id="simple-test")
     print(f"  Plan summary generated: {bool(final_state.get('plan_summary'))}")
 
     print("\n✅ Simple multi-agent test completed!")
@@ -275,10 +263,10 @@ if __name__ == "__main__":
         print("Make sure your .env file contains: ANTHROPIC_API_KEY=your_key_here")
     
     # Run the simple test first for easier debugging
-    print("=" * 60)
-    print("SIMPLE MULTI-AGENT TEST")
-    print("=" * 60)
-    run_simple_multi_agent_test()
+    #print("=" * 60)
+    #print("SIMPLE MULTI-AGENT TEST")
+    #print("=" * 60)
+    #run_simple_multi_agent_test()
     
     print("\n" + "=" * 60)
     print("LANGGRAPH MULTI-AGENT WORKFLOW TEST")

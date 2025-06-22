@@ -75,14 +75,16 @@ def create_multi_agent_workflow():
     graph.add_node("dispatch_ops", dispatch_ops_agent)
     graph.add_node("passenger_rebooking", llm_passenger_rebooking_agent)
     graph.add_node("confirmation", confirmation_agent)
+    graph.add_node("database_update", llm_passenger_rebooking_agent)  # Reuse rebooking agent for DB updates
     graph.add_node("planner", planner_agent)
 
-    # Define execution order: crew_ops -> dispatch_ops -> passenger_rebooking -> confirmation -> planner
+    # Define execution order: crew_ops -> dispatch_ops -> passenger_rebooking -> confirmation -> database_update -> planner
     graph.set_entry_point("crew_ops")
     graph.add_edge("crew_ops", "dispatch_ops")
     graph.add_edge("dispatch_ops", "passenger_rebooking")
     graph.add_edge("passenger_rebooking", "confirmation")
-    graph.add_edge("confirmation", "planner")
+    graph.add_edge("confirmation", "database_update")
+    graph.add_edge("database_update", "planner")
     graph.add_edge("planner", END)
 
     # Compile graph
