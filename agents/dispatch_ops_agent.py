@@ -417,6 +417,7 @@ def dispatch_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     # 🌤️ Weather risk check - Enhanced with time windows and affected flights
     weather_analysis = analyze_weather_impact(state.get("weather_data", {}))
     
+    # --- Add delay advisories if weather risk detected ---
     if weather_analysis.get("has_weather_risk"):
         weather_status = "EXCEPTION"
         
@@ -439,10 +440,33 @@ def dispatch_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         
         if impact_summary.get("weather_duration_hours"):
             state["messages"].append(f"Weather expected to last {impact_summary['weather_duration_hours']} hours")
+        
+        # --- Create delay advisories ---
+        advisories = []
+        for flight in weather_analysis["affected_flights"]:
+            flight_num = flight.get("flight_number", "UNKNOWN")
+            impact = flight.get("weather_impact", "delay")
+            airport = weather_alert.get("airport", "")
+            start = weather_alert.get("start_time", "")
+            end = weather_alert.get("end_time", "")
+            advisories.append(
+                f"Delay advisory: Flight {flight_num} at {airport} expected {impact} due to weather from {start} to {end}."
+            )
+        if advisories:
+            if "delay_advisories" in state:
+                # Accumulate and deduplicate
+                state["delay_advisories"] = list(set(state["delay_advisories"] + advisories))
+            else:
+                state["delay_advisories"] = advisories
+            state["messages"].append(f"Published {len(advisories)} delay advisories.")
+            print(f"[DISPATCH DEBUG] Created {len(advisories)} delay advisories: {advisories}")
+        else:
+            print(f"[DISPATCH DEBUG] No delay advisories created")
     else:
         state["messages"].append("Weather conditions: ✅ Clear")
         state["weather_affected_flights"] = []
         state["weather_impact_summary"] = weather_analysis["impact_summary"]
+        print(f"[DISPATCH DEBUG] No weather risk detected, no delay advisories created")
 
     # ⛽ Fuel readiness check
     fuel_issues = detect_fuel_capacity(state.get("fuel_data", {}))
