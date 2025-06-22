@@ -381,15 +381,36 @@ def generate_executive_summary(state: Dict[str, Any], run_id: str) -> Dict[str, 
 
     # Prepare a formatted string for delay advisories
     delay_advisories = state.get("delay_advisories", [])
-    print(f"[DEBUG] Delay advisories in state: {delay_advisories}")
+    #print(f"[DEBUG] Delay advisories in state: {delay_advisories}")
     if delay_advisories:
         advisories_str = "Published Delay Advisories:\n" + '\n'.join(f"- {adv}" for adv in delay_advisories)
-        print(f"[DEBUG] Formatted advisories string: {advisories_str}")
+        #print(f"[DEBUG] Formatted advisories string: {advisories_str}")
     else:
-        advisories_str = "No delay advisories were published."
-        print(f"[DEBUG] No delay advisories found in state")
+        advisories_str = "No delay advisories published."
     
-    print(f"[DEBUG] Final advisories string being sent to LLM: {advisories_str}")
+    # Prepare rebooking information for the Customer Rebooking Report
+    rebooking_info = ""
+    if state.get("flight_cancellation_notification"):
+        impacted_passengers = state.get("impacted_passengers", [])
+        alternative_flights = state.get("alternative_flights", [])
+        confirmations = state.get("confirmations", [])
+        
+        rebooking_info = f"""
+Customer Rebooking Information:
+- Cancelled Flight: {state['flight_cancellation_notification']['flight_number']} to {state['flight_cancellation_notification']['arrival_location']}
+- Impacted Passengers: {len(impacted_passengers)} passengers
+- Alternative Flights Found: {len(alternative_flights)} options
+- Confirmation Results: {len(confirmations)} responses collected
+"""
+        
+        if confirmations:
+            accepted = [c for c in confirmations if c.get('response') == 'accept rebooking']
+            manual = [c for c in confirmations if c.get('response') == 'manually rebook with agent']
+            rebooking_info += f"- Accepted Rebookings: {len(accepted)} passengers\n"
+            rebooking_info += f"- Manual Rebooking Requests: {len(manual)} passengers\n"
+            rebooking_info += f"- Database Updates: {len(confirmations)} passenger records updated\n"
+    else:
+        rebooking_info = "No flight cancellations or rebooking activities occurred."
 
     # Initialize the LLM agent
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -409,15 +430,20 @@ def generate_executive_summary(state: Dict[str, Any], run_id: str) -> Dict[str, 
         ("system", 
          "You are an executive planner summarizing operational activity.\n"
          "Use `read_messages_tool` to access the system-wide activity log.\n"
-         "Then provide a clear executive summary that includes:\n"
-         "- Major actions taken by agents\n"
+         "Then provide a clear executive summary with TWO SECTIONS:\n\n"
+         "1. OPERATIONS REPORT:\n"
+         "- Major actions taken by dispatch and crew agents\n"
          "- Any remaining issues or risks\n"
          "- Recommended next steps or resolutions\n"
          "- Resolution Steps: List all crew substitutions made, using the following data:\n"
          f"{resolution_steps_str}\n"
          "- Published Delay Advisories: List all advisories published, using the following data:\n"
-         f"{advisories_str}\n"
-         "If no substitutions or advisories were made, state that explicitly."
+         f"{advisories_str}\n\n"
+         "2. CUSTOMER REBOOKING REPORT:\n"
+         "Use the following rebooking data to summarize passenger rebooking activities:\n"
+         f"{rebooking_info}\n"
+         "If no rebooking occurred, state that explicitly.\n\n"
+         "Format your response with clear section headers and bullet points for easy reading."
         ),
         ("user", "{input}"),
         ("ai", "{agent_scratchpad}")
@@ -437,7 +463,7 @@ def generate_executive_summary(state: Dict[str, Any], run_id: str) -> Dict[str, 
         messages = f"No messages found for run_id: {run_id}"
 
     result = agent_executor.invoke({
-        "input": f"Generate an executive-level summary of all actions and changes from system agents. Use the following message log:\n\n{messages}",
+        "input": f"Generate an executive-level summary with Operations Report and Customer Rebooking Report sections. Use the following message log:\n\n{messages}",
         "run_id": run_id
     })
 
@@ -460,8 +486,8 @@ def generate_executive_summary(state: Dict[str, Any], run_id: str) -> Dict[str, 
     print(summary_text)
 
     # === Human-In-The-Loop Approval for Executive Summary ===
-    print("\n📋 Final Executive Summary:")
-    print(summary_text)
+    # print("\n📋 Final Executive Summary:")
+    # print(summary_text)
 
     approval = input("\nDo you approve this plan summary? (yes/no): ").strip().lower()
     if approval != "yes":

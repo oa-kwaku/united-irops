@@ -303,7 +303,7 @@ def crew_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         has_crew_schedule = len(crew_schedule_df) > 0
     
     if has_crew_schedule:
-        print("📋 Using crew schedule from state")
+        # print("📋 Using crew schedule from state")
         try:
             # Convert DataFrame to list of dictionaries if needed
             if hasattr(crew_schedule_df, 'to_dict'):
@@ -311,15 +311,15 @@ def crew_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 crew_schedule = crew_schedule_df
             
-            print(f"📋 Crew schedule has {len(crew_schedule)} members")
-            print(f"📋 First crew member fields: {list(crew_schedule[0].keys()) if crew_schedule else 'No crew'}")
+            print(f"📋 Crew schedule contains {len(crew_schedule)} updates for review")
+            # print(f"📋 First crew member fields: {list(crew_schedule[0].keys()) if crew_schedule else 'No crew'}")
             
             # Run legality check on state crew schedule
             violations = check_legality_tool.invoke({"crew_schedule": crew_schedule})
             print(f"📋 Found {len(violations)} violations: {violations}")
             
             unassigned_crew = get_unassigned_crew_from_db.invoke({})
-            print(f"📋 Found {len(unassigned_crew)} unassigned crew")
+            # print(f"📋 Found {len(unassigned_crew)} unassigned crew")
             
             if violations and unassigned_crew:
                 substitutions = propose_substitutes_tool.invoke({
@@ -361,7 +361,7 @@ def crew_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
                 
                 # Get unassigned crew for potential substitutions
                 unassigned_crew = get_unassigned_crew_from_db.invoke({})
-                print(f"📋 Found {len(unassigned_crew)} unassigned crew available for substitution")
+                # print(f"📋 Found {len(unassigned_crew)} unassigned crew available for substitution")
                 
                 # Generate substitutions for all violations
                 if violations and unassigned_crew:

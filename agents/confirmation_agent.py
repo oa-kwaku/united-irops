@@ -34,7 +34,32 @@ def confirmation_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     
     # Step 1: Send all proposals if not already sent
     if "sent_messages" not in state:
-        print(f"📨 Sending {len(proposals)} rebooking proposals to passenger communications system...")
+        # print(f"📨 Sending {len(proposals)} rebooking proposals to passenger communications system...")
+        
+        # Suppress individual logging messages during batch send
+        mcp_client.suppress_logging(True)
+        
+        # Show an example of what passengers will receive
+        if proposals:
+            example_proposal = proposals[0]
+            example_name = example_proposal.get("passenger_name", "Passenger")
+            example_original = example_proposal.get("original_flight", "UA70161")
+            example_rebooked = example_proposal.get("rebooked_flight", "UA111")
+            example_departure = example_proposal.get("departure_location", "LAX")
+            example_arrival = example_proposal.get("arrival_location", "ORD")
+            
+            # Get departure and arrival times for the rebooked flight
+            example_departure_time = example_proposal.get("departure_time", "10:30 AM")
+            example_arrival_time = example_proposal.get("arrival_time", "2:45 PM")
+            
+            print(f"📝 Example message to {example_name}:")
+            print(f"   \"Hello {example_name}, your flight {example_original} from {example_departure} to {example_arrival} has been cancelled. ")
+            print(f"   The next available flight is {example_rebooked} departing {example_departure_time} and arriving {example_arrival_time}. ")
+            print(f"   Would you like to confirm this rebooking or contact a United Airlines representative to review other options?\"")
+        
+        # Add single summary message
+        print(f"📨 MCP Client: Sending {len(proposals)} rebooking proposals to passenger communications system...")
+        
         sent_messages = []
         
         # Clear any previous responses to avoid message ID conflicts
@@ -76,11 +101,6 @@ def confirmation_agent(state: Dict[str, Any]) -> Dict[str, Any]:
                 # Send to MCP server via client (no delays)
                 result = mcp_client.send_rebooking_proposal(passenger_proposal)
                 message_id = result["message_id"]
-                
-                # Only print every 10th message to reduce console spam
-                if i % 10 == 0 or i == len(proposals) - 1:
-                    print(f"  - Sent to {passenger_name}: ... cancelled. New flight: {rebooked_flight}. Confirm?")
-                    print(f"  - MCP Message ID: {message_id[:8]}... (queued for processing)")
                 
                 # Track sent message for response handling
                 sent_messages.append({

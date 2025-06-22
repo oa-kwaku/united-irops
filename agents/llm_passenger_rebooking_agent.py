@@ -129,6 +129,12 @@ def update_passenger_records(confirmations: List[Dict[str, Any]]) -> int:
     db_client = get_database_client_instance()
     updated_count = 0
     
+    # Suppress individual logging messages during batch update
+    db_client.suppress_logging(True)
+    
+    # Log that we're starting the database update process
+    # print(f"🗄️ Database Client: Engaging database for {len(confirmations)} passenger updates...")
+    
     for conf in confirmations:
         passenger_id = conf['passenger_id']
         new_flight = conf['rebooked_flight']
@@ -147,6 +153,9 @@ def update_passenger_records(confirmations: List[Dict[str, Any]]) -> int:
                 print(f"Database update failed for passenger {passenger_id}: {result.get('error', 'Unknown error')}")
         except Exception as e:
             print(f"Database update error for passenger {passenger_id}: {e}")
+    
+    # Re-enable logging for future operations
+    db_client.suppress_logging(False)
     
     return updated_count
 
@@ -371,7 +380,7 @@ Your workflow should be:
 1. Call get_impacted_passengers to get passenger data
 2. Call get_cancelled_flight_details to get flight details
 3. Call find_alternative_flights to get alternative flights (provide passenger_count parameter)
-4. Call assign_passengers_from_state to perform the assignment
+4. IMPORTANT: Call assign_passengers_from_state to perform the assignment
 5. Provide analysis and reasoning for your decisions
 
 The data from your tool calls will be automatically stored in the state, and assign_passengers_from_state will use that data.
@@ -406,11 +415,13 @@ Always be thorough in your analysis and explain your reasoning clearly."""
     1. First, get the impacted passengers using get_impacted_passengers
     2. Get the cancelled flight details using get_cancelled_flight_details  
     3. Find alternative flights using find_alternative_flights (provide passenger_count parameter)
-    4. Make intelligent assignments using assign_passengers_from_state
+    4. IMPORTANT: Call assign_passengers_from_state to perform the assignment
     
     The data from your tool calls will be automatically stored in the state.
     Consider passenger loyalty tiers and preferences when making your analysis.
     Provide clear analysis and reasoning for your decisions.
+    
+    CRITICAL: You MUST call assign_passengers_from_state after getting the passenger and flight data.
     """
     
     try:
@@ -422,6 +433,7 @@ Always be thorough in your analysis and explain your reasoning clearly."""
         
         # Initialize variables to track extracted data
         assignment_results = None
+        assignment_tool_called = False
         
         # Check if the LLM actually called the assignment tool
         # The result should contain the tool call results
@@ -435,11 +447,16 @@ Always be thorough in your analysis and explain your reasoning clearly."""
                     # Store tool results in state
                     if tool_name == "get_impacted_passengers":
                         state["impacted_passengers_data"] = tool_result
+                        print(f"📋 Stored {len(tool_result)} impacted passengers in state")
                     elif tool_name == "find_alternative_flights":
                         state["alternative_flights_data"] = tool_result
+                        print(f"✈️ Stored {len(tool_result)} alternative flights in state")
                     elif tool_name == "get_cancelled_flight_details":
                         state["cancelled_flight_info"] = tool_result
+                        print(f"📅 Stored cancelled flight details in state")
                     elif tool_name == "assign_passengers_from_state":
+                        assignment_tool_called = True
+                        print(f"✅ LLM called assign_passengers_from_state tool")
                         # Perform the actual assignment using data from state
                         assignment_results = assign_passengers_to_flights.invoke({
                             "impacted_passengers_data": state.get("impacted_passengers_data", []),
@@ -447,17 +464,29 @@ Always be thorough in your analysis and explain your reasoning clearly."""
                         })
             
             # If LLM didn't call the assignment tool, we'll do it ourselves
-            if not assignment_results:
+            if not assignment_tool_called:
+                print(f"⚠️ LLM did not call assign_passengers_from_state - performing assignment automatically")
                 assignment_results = assign_passengers_to_flights.invoke({
                     "impacted_passengers_data": state.get("impacted_passengers_data", []),
                     "alternative_flights_data": state.get("alternative_flights_data", [])
                 })
         else:
             # Perform assignment using state data
+            print(f"⚠️ No intermediate steps found - performing assignment automatically")
             assignment_results = assign_passengers_to_flights.invoke({
                 "impacted_passengers_data": state.get("impacted_passengers_data", []),
                 "alternative_flights_data": state.get("alternative_flights_data", [])
             })
+        
+        # Ensure we have assignment results
+        if not assignment_results:
+            print(f"❌ No assignment results - creating fallback assignment")
+            assignment_results = assign_passengers_to_flights.invoke({
+                "impacted_passengers_data": state.get("impacted_passengers_data", []),
+                "alternative_flights_data": state.get("alternative_flights_data", [])
+            })
+        
+        print(f"📊 Assignment completed: {assignment_results['summary']['passengers_assigned']} passengers assigned")
         
         # Get the cancelled flight details for proposal creation
         cancelled_flight_info = state.get("cancelled_flight_info", [])
@@ -501,6 +530,8 @@ Always be thorough in your analysis and explain your reasoning clearly."""
             
             proposals.append(proposal)
         
+        print(f"📝 Created {len(proposals)} rebooking proposals")
+        
         state.update({
             "impacted_passengers": assignment_results['passengers'],
             "alternative_flights": assignment_results['flights'],
@@ -514,6 +545,7 @@ Always be thorough in your analysis and explain your reasoning clearly."""
         state["messages"].append("LLM Passenger Rebooking Agent completed intelligent rebooking analysis")
         
     except Exception as e:
+        print(f"❌ Error in LLM agent: {str(e)}")
         state["messages"].append(f"LLM Passenger Rebooking Agent error: {str(e)}")
         # Fallback to basic functionality
         state["messages"].append("Falling back to basic rebooking logic")

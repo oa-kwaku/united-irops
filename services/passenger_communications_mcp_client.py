@@ -28,6 +28,11 @@ class PassengerCommunicationsMCPClient:
         self.retry_delay = retry_delay
         self.session = requests.Session()
         self.session.headers.update({'Content-Type': 'application/json'})
+        self._suppress_logging = False
+    
+    def suppress_logging(self, suppress: bool = True):
+        """Temporarily suppress logging for batch operations."""
+        self._suppress_logging = suppress
     
     def send_rebooking_proposal(self, proposal: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -49,7 +54,8 @@ class PassengerCommunicationsMCPClient:
                 response.raise_for_status()
                 
                 result = response.json()
-                logger.info(f"📨 MCP Client: Sent proposal for {proposal.get('passenger_name', proposal['passenger_id'])}")
+                if not self._suppress_logging:
+                    logger.info(f"📨 MCP Client: Sent proposal for {proposal.get('passenger_name', proposal['passenger_id'])}")
                 return result
                 
             except requests.exceptions.RequestException as e:

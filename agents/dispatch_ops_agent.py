@@ -452,6 +452,7 @@ def dispatch_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             advisories.append(
                 f"Delay advisory: Flight {flight_num} at {airport} expected {impact} due to weather from {start} to {end}."
             )
+        
         if advisories:
             if "delay_advisories" in state:
                 # Accumulate and deduplicate
@@ -459,14 +460,16 @@ def dispatch_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 state["delay_advisories"] = advisories
             state["messages"].append(f"Published {len(advisories)} delay advisories.")
-            print(f"[DISPATCH DEBUG] Created {len(advisories)} delay advisories: {advisories}")
+            # print(f"[DISPATCH DEBUG] Created {len(advisories)} delay advisories: {advisories}")
         else:
-            print(f"[DISPATCH DEBUG] No delay advisories created")
+            # print(f"[DISPATCH DEBUG] No delay advisories created")
+            state["delay_advisories"] = []
     else:
         state["messages"].append("Weather conditions: ✅ Clear")
         state["weather_affected_flights"] = []
         state["weather_impact_summary"] = weather_analysis["impact_summary"]
-        print(f"[DISPATCH DEBUG] No weather risk detected, no delay advisories created")
+        # print(f"[DISPATCH DEBUG] No weather risk detected, no delay advisories created")
+        state["delay_advisories"] = []
 
     # ⛽ Fuel readiness check
     fuel_issues = detect_fuel_capacity(state.get("fuel_data", {}))

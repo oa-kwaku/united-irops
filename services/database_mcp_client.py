@@ -28,6 +28,7 @@ class DatabaseMCPClient:
         self.retry_delay = retry_delay
         self.session = requests.Session()
         self.session.headers.update({'Content-Type': 'application/json'})
+        self._suppress_logging = False
     
     def execute_tool(self, tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -50,7 +51,9 @@ class DatabaseMCPClient:
                 response.raise_for_status()
                 
                 result = response.json()
-                logger.info(f"🗄️ Database Client: Executed {tool_name}")
+                # Only log if not suppressing logging
+                if not self._suppress_logging:
+                    logger.info(f"🗄️ Database Client: Executed {tool_name}")
                 return result
                 
             except requests.exceptions.RequestException as e:
@@ -64,6 +67,15 @@ class DatabaseMCPClient:
         
         # This should never be reached due to the raise statement above, but needed for type checking
         raise RuntimeError("Unexpected error in execute_tool")
+    
+    def suppress_logging(self, suppress: bool = True):
+        """
+        Temporarily suppress logging for batch operations.
+        
+        Args:
+            suppress: Whether to suppress logging (default: True)
+        """
+        self._suppress_logging = suppress
     
     def query_passengers(self, flight_number: Optional[str] = None, loyalty_tier: Optional[str] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """

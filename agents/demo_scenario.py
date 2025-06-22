@@ -63,7 +63,7 @@ def create_intelligent_routing_demo():
     3. Crew issues detected -> Crew ops, then dispatch
     4. Planner generates summary
     """
-    print("Creating intelligent routing demo graph...")
+    print("🔧 Creating intelligent routing workflow...")
     
     # Create the graph
     workflow = StateGraph(DemoState)
@@ -73,9 +73,8 @@ def create_intelligent_routing_demo():
         """
         Analyzes initial state and sets up the workflow sequence.
         """
-        print("\n--- INITIAL ROUTER ---")
-        print("Analyzing initial state and determining workflow sequence...")
-        print(f"[DEBUG] flight_cancellation_notification: {state.get('flight_cancellation_notification')}")
+        print("\n🚀 INITIAL ROUTER")
+        print("Analyzing operational conditions and determining workflow sequence...")
         
         # Check for weather alerts and crew issues
         weather_data = state.get("weather_data", {})
@@ -113,8 +112,8 @@ def create_intelligent_routing_demo():
             "current_step": 0,
             "routing_logic": routing_logic
         })
-        print(f"Workflow sequence: {' -> '.join(workflow_sequence)} (final order)")
-        print(f"Routing logic: {routing_logic}")
+        print(f"📋 Workflow sequence: {' → '.join(workflow_sequence)}")
+        print(f"🎯 Routing logic: {routing_logic}")
         
         return state
     
@@ -126,22 +125,18 @@ def create_intelligent_routing_demo():
         workflow_sequence = state.get("workflow_sequence", [])
         current_step = state.get("current_step", 0)
         
-        print(f"[ROUTING DEBUG] Current step: {current_step}, Sequence: {workflow_sequence}")
-        
         # Check if we've completed all steps
         if current_step >= len(workflow_sequence):
-            print("  [ROUTING DEBUG] Workflow complete, ending")
             return "end"
         
         # Get the next node from the sequence
         next_node = workflow_sequence[current_step]
-        print(f"  [ROUTING DEBUG] Routing to: {next_node}")
         
         return next_node
     
     # Define the agent nodes
     def dispatch_ops_node(state: Dict[str, Any]) -> Dict[str, Any]:
-        print("\n--- DISPATCH OPS AGENT ---")
+        print("\n🛰️ DISPATCH OPERATIONS")
         print("Analyzing weather conditions and dispatch readiness...")
         result = dispatch_ops_agent(state)
         # Increment the step after completing the node
@@ -149,7 +144,7 @@ def create_intelligent_routing_demo():
         return result
     
     def crew_ops_node(state: Dict[str, Any]) -> Dict[str, Any]:
-        print("\n--- CREW OPS AGENT ---")
+        print("\n👨‍✈️ CREW OPERATIONS")
         print("Analyzing FAA compliance and crew substitutions...")
         result = crew_ops_agent(state)
         # Increment the step after completing the node
@@ -157,8 +152,8 @@ def create_intelligent_routing_demo():
         return result
     
     def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
-        print("\n--- PLANNER AGENT ---")
-        print("Generating executive summary...")
+        print("\n🧠 EXECUTIVE PLANNER")
+        print("Generating comprehensive executive summary...")
         run_id = state.get("run_id", "demo-scenario")
         result = planner_agent(state, run_id=run_id)
         # Increment the step after completing the node
@@ -166,14 +161,14 @@ def create_intelligent_routing_demo():
         return result
     
     def rebooking_node(state: Dict[str, Any]) -> Dict[str, Any]:
-        print("\n--- REBOOKING AGENT ---")
+        print("\n🎫 PASSENGER REBOOKING")
         print("Handling passenger rebooking for cancellations...")
         result = llm_passenger_rebooking_agent(state)
         result["current_step"] = result.get("current_step", 0) + 1
         return result
     
     def confirmation_node(state: Dict[str, Any]) -> Dict[str, Any]:
-        print("\n--- CONFIRMATION AGENT ---")
+        print("\n📞 PASSENGER CONFIRMATIONS")
         print("Collecting passenger confirmations...")
         
         # Loop until all responses are collected
@@ -208,15 +203,33 @@ def create_intelligent_routing_demo():
         return state
     
     def database_update_node(state: Dict[str, Any]) -> Dict[str, Any]:
-        print("\n--- DATABASE UPDATE ---")
+        print("\n💾 DATABASE UPDATE")
         print("Updating passenger records in database...")
         
-        # The llm_passenger_rebooking_agent will POP 'confirmations', so we save them for verification
+        # Save confirmations for verification before they get processed
         confirmations_to_verify = state.get("confirmations", [])
-        result = llm_passenger_rebooking_agent(state)
-        result["confirmations_for_verification"] = confirmations_to_verify
-        result["current_step"] = result.get("current_step", 0) + 1
-        return result
+        
+        # Only update database if we have confirmations
+        if confirmations_to_verify:
+            # Import the database update tool directly
+            from agents.llm_passenger_rebooking_agent import update_passenger_records
+            
+            # Show progress message
+            print(f"Updating {len(confirmations_to_verify)} passenger records in database...")
+            
+            # Update the database with confirmed rebookings
+            updated_count = update_passenger_records.invoke({"confirmations": confirmations_to_verify})
+            print(f"✅ {updated_count} passenger updates successfully completed")
+            
+            state["messages"] = state.get("messages", []) + [f"Database updated: {updated_count} passenger records modified"]
+        else:
+            print("⚠️ No confirmations to update in database")
+            state["messages"] = state.get("messages", []) + ["No passenger records updated - no confirmations available"]
+        
+        # Store confirmations for verification
+        state["confirmations_for_verification"] = confirmations_to_verify
+        state["current_step"] = state.get("current_step", 0) + 1
+        return state
     
     # Add nodes to the graph
     workflow.add_node("initial_router", initial_router_node)
@@ -310,14 +323,14 @@ def create_intelligent_routing_demo():
     # Compile the graph
     app = workflow.compile()
     
-    print("Intelligent routing demo graph created successfully")
+    print("✅ Intelligent routing workflow created successfully")
     return app
 
 def run_demo_scenario():
     """
     Runs the intelligent routing demo with weather alert and crew issues.
     """
-    print("Starting Intelligent Routing Demo Scenario")
+    print("🚀 UNITED AIRLINES INTELLIGENT OPERATIONS DEMO")
     print("=" * 60)
     
     # Create the workflow
@@ -370,44 +383,40 @@ def run_demo_scenario():
         }
     }
     
-    print("Initial State:")
-    print(initial_state)
-    print(f"  - Weather: {initial_state['weather_data']['DepartureWeather']}")
-    print(f"  - Crew members: {len(initial_state['crew_schedule'])}")
-    print(f"  - Run ID: {run_id}")
+    print("📊 Scenario Setup:")
+    print(f"  • Weather Conditions: {initial_state['weather_data']['DepartureWeather']}")
+    print(f"  • Crew Updates for Review: {len(initial_state['crew_schedule'])}")
+    print(f"  • Cancelled Flight: {initial_state['flight_cancellation_notification']['flight_number']}")
+    print(f"  • Run ID: {run_id}")
     
     # Invoke the graph
-    print("\nExecuting intelligent routing workflow...")
+    print("\n🔄 Executing intelligent routing workflow...")
     final_state = app.invoke(initial_state)
     
     # Print results
     print("\n" + "=" * 60)
-    print("DEMO SCENARIO RESULTS")
+    print("📈 DEMO RESULTS SUMMARY")
     print("=" * 60)
     
-    print(f"\nDispatch Operations:")
-    print(f"  Status: {final_state.get('dispatch_status', 'UNKNOWN')}")
-    print(f"  Weather affected flights: {len(final_state.get('weather_affected_flights', []))}")
-    if final_state.get('dispatch_violations'):
-        print(f"  Violations: {list(final_state.get('dispatch_violations', {}).keys())}")
+    print(f"\n🛰️ Dispatch Operations:")
+    print(f"  • Status: {final_state.get('dispatch_status', 'UNKNOWN')}")
+    print(f"  • Weather affected flights: {len(final_state.get('weather_affected_flights', []))}")
+    print(f"  • Delay advisories published: {len(final_state.get('delay_advisories', []))}")
     
-    print(f"\nCrew Operations:")
-    print(f"  Crew substitutions: {len(final_state.get('crew_substitutions', {}))}")
-    print(f"  Legality flags: {len(final_state.get('legality_flags', []))}")
-    if final_state.get('legality_flags'):
-        print(f"  Violating flights: {final_state.get('legality_flags')}")
+    print(f"\n👨‍✈️ Crew Operations:")
+    print(f"  • Crew substitutions: {len(final_state.get('crew_substitutions', {}))}")
+    print(f"  • FAA violations resolved: {len(final_state.get('legality_flags', []))}")
     
-    print(f"\nPlanning:")
-    if final_state.get('plan_summary'):
-        summary_preview = final_state['plan_summary'][:200] + "..." if len(final_state['plan_summary']) > 200 else final_state['plan_summary']
-        print(f"  Summary: {summary_preview}")
+    print(f"\n🎫 Passenger Rebooking:")
+    print(f"  • Impacted passengers: {len(final_state.get('impacted_passengers', []))}")
+    print(f"  • Alternative flights found: {len(final_state.get('alternative_flights', []))}")
+    print(f"  • Confirmations collected: {len(final_state.get('confirmations', []))}")
     
-    print(f"\nSystem Messages ({len(final_state.get('messages', []))}):")
-    for msg in final_state.get('messages', [])[-5:]:  # Show last 5 messages
-        print(f"  - {msg}")
+    print(f"\n🧠 Executive Summary:")
+    print(f"  • Saved markdown to outputs directory")
     
-    print(f"\nDemo scenario completed successfully!")
-    print(f"Expected flow: Weather Alert -> Dispatch Ops -> Crew Issues -> Crew Ops -> Planner")
+    print(f"\n✅ Demo completed successfully!")
+    print(f"📄 Executive summary saved to: outputs/summary_{run_id}.md")
     
     return final_state
 
