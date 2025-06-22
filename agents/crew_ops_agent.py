@@ -296,7 +296,13 @@ def crew_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     # Check if we have crew schedule in state first
     crew_schedule_df = state.get("crew_schedule", pd.DataFrame())
     
-    if not crew_schedule_df.empty:
+    # Handle both DataFrame and list formats
+    if hasattr(crew_schedule_df, 'empty'):
+        has_crew_schedule = not crew_schedule_df.empty
+    else:
+        has_crew_schedule = len(crew_schedule_df) > 0
+    
+    if has_crew_schedule:
         print("📋 Using crew schedule from state")
         try:
             # Convert DataFrame to list of dictionaries if needed
@@ -429,6 +435,7 @@ def crew_ops_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         print("✅ Substitutions approved by human reviewer.")
         state.setdefault("messages", []).append("Human reviewer approved the crew substitutions.")
 
+    # Preserve all existing state fields and return the complete state
     return state
 
 def test_crew_ops_agent():
