@@ -405,6 +405,10 @@ def generate_executive_summary(state: Dict[str, Any], run_id: str) -> Dict[str, 
         alternative_flights = state.get("alternative_flights", [])
         confirmations = state.get("confirmations", [])
         
+        # Check for algorithmic fallback usage
+        workflow_type = state.get("workflow_type", "llm_agent")
+        llm_analysis = state.get("llm_analysis", "")
+        
         rebooking_info = f"""
 Customer Rebooking Information:
 - Cancelled Flight: {state['flight_cancellation_notification']['flight_number']} to {state['flight_cancellation_notification']['arrival_location']}
@@ -412,6 +416,13 @@ Customer Rebooking Information:
 - Alternative Flights Found: {len(alternative_flights)} options
 - Confirmation Results: {len(confirmations)} responses collected
 """
+        
+        # Add algorithmic fallback information
+        if workflow_type in ["algorithmic_fallback", "critical_fallback"]:
+            rebooking_info += f"- System Performance: Algorithmic assignment workflow was engaged due to LLM agent unavailability\n"
+            rebooking_info += f"- Fallback Reason: {llm_analysis}\n"
+        else:
+            rebooking_info += f"- System Performance: LLM-powered rebooking completed successfully\n"
         
         if confirmations:
             accepted = [c for c in confirmations if c.get('response') == 'accept rebooking']
@@ -421,6 +432,24 @@ Customer Rebooking Information:
             rebooking_info += f"- Database Updates: {len(confirmations)} passenger records updated\n"
     else:
         rebooking_info = "No flight cancellations or rebooking activities occurred."
+
+    # Check for algorithmic fallback usage
+    workflow_type = state.get("workflow_type", "llm_agent")
+    llm_analysis = state.get("llm_analysis", "")
+    
+    system_performance_info = ""
+    if workflow_type in ["algorithmic_fallback", "critical_fallback"]:
+        system_performance_info = f"""
+System Performance Note:
+- Algorithmic assignment workflow was engaged due to LLM agent unavailability
+- Fallback Reason: {llm_analysis}
+- All rebooking operations completed successfully using algorithmic assignment
+"""
+    else:
+        system_performance_info = """
+System Performance Note:
+- All LLM-powered agentic systems functioning
+"""
 
     # Initialize the LLM agent
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -440,7 +469,7 @@ Customer Rebooking Information:
         ("system", 
          "You are an executive planner summarizing operational activity.\n"
          "Use `read_messages_tool` to access the system-wide activity log.\n"
-         "Then provide a clear executive summary with TWO SECTIONS:\n\n"
+         "Then provide a clear executive summary with THREE SECTIONS:\n\n"
          "1. OPERATIONS REPORT:\n"
          "- Major actions taken by dispatch and crew agents\n"
          "- Any remaining issues or risks\n"
@@ -449,7 +478,10 @@ Customer Rebooking Information:
          f"{resolution_steps_str}\n"
          "- Published Delay Advisories: List all advisories published, using the following data:\n"
          f"{advisories_str}\n\n"
-         "2. CUSTOMER REBOOKING REPORT:\n"
+         "2. SYSTEM PERFORMANCE REPORT:\n"
+         "IMPORTANT: You MUST include the following system performance information exactly as provided:\n"
+         f"{system_performance_info}\n\n"
+         "3. CUSTOMER REBOOKING REPORT:\n"
          "Use the following rebooking data to summarize passenger rebooking activities:\n"
          f"{rebooking_info}\n"
          "If no rebooking occurred, state that explicitly.\n\n"

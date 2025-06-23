@@ -9,7 +9,14 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 import inspect
+import sys
+
+# Add the parent directory to the path to import services
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from services.database_mcp_client import get_database_client
+import signal
+import platform
 
 # Load environment variables
 load_dotenv()
@@ -302,6 +309,162 @@ def assign_passengers_from_state() -> Dict[str, Any]:
         "message": "Assignment will be performed using data from state"
     }
 
+def hardcoded_rebooking_workflow(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Algorithmic fallback workflow for passenger rebooking when LLM agent fails.
+    This implements the same logic as the LLM agent but using direct tool calls.
+    
+    Args:
+        state: The current state dictionary
+        
+    Returns:
+        Updated state with rebooking results
+    """
+    print("🔄 Executing algorithmic rebooking workflow...")
+    
+    # Check for flight cancellation notification
+    flight_cancellation = state.get("flight_cancellation_notification")
+    if not flight_cancellation:
+        state["messages"].append("Algorithmic workflow: No flight cancellation detected")
+        return state
+    
+    cancelled_flight_number = flight_cancellation.get("flight_number")
+    arrival_location = flight_cancellation.get("arrival_location")
+    
+    try:
+        # Step 1: Get impacted passengers
+        print("📋 Step 1: Getting impacted passengers...")
+        impacted_passengers_data = get_impacted_passengers.invoke({
+            "cancelled_flight_number": cancelled_flight_number
+        })
+        state["impacted_passengers_data"] = impacted_passengers_data
+        print(f"✅ Found {len(impacted_passengers_data)} impacted passengers")
+        
+        # Step 2: Get cancelled flight details
+        print("📅 Step 2: Getting cancelled flight details...")
+        cancelled_flight_info = get_cancelled_flight_details.invoke({
+            "cancelled_flight_number": cancelled_flight_number
+        })
+        state["cancelled_flight_info"] = cancelled_flight_info
+        print(f"✅ Retrieved flight details")
+        
+        # Step 3: Find alternative flights
+        print("✈️ Step 3: Finding alternative flights...")
+        if cancelled_flight_info:
+            departure_location = cancelled_flight_info[0]['departure_location']
+            cancelled_departure_time = cancelled_flight_info[0]['departure_time']
+            passenger_count = len(impacted_passengers_data)
+            
+            alternative_flights_data = find_alternative_flights.invoke({
+                "cancelled_flight_number": cancelled_flight_number,
+                "departure_location": departure_location,
+                "arrival_location": arrival_location,
+                "cancelled_departure_time": cancelled_departure_time,
+                "passenger_count": passenger_count
+            })
+            state["alternative_flights_data"] = alternative_flights_data
+            print(f"✅ Found {len(alternative_flights_data)} alternative flights")
+        else:
+            print("⚠️ No flight details available - using default values")
+            alternative_flights_data = find_alternative_flights.invoke({
+                "cancelled_flight_number": cancelled_flight_number,
+                "departure_location": "LAX",  # Default departure
+                "arrival_location": arrival_location,
+                "cancelled_departure_time": "2025-06-25 10:00:00",  # Default time
+                "passenger_count": len(impacted_passengers_data)
+            })
+            state["alternative_flights_data"] = alternative_flights_data
+        
+        # Step 4: Assign passengers to flights
+        print("🎯 Step 4: Assigning passengers to flights...")
+        assignment_results = assign_passengers_to_flights.invoke({
+            "impacted_passengers_data": impacted_passengers_data,
+            "alternative_flights_data": alternative_flights_data
+        })
+        print(f"✅ Assignment completed: {assignment_results['summary']['passengers_assigned']} passengers assigned")
+        
+        # Step 5: Create rebooking proposals
+        print("📝 Step 5: Creating rebooking proposals...")
+        proposals = []
+        
+        # Get flight details for proposal creation
+        cancelled_departure_time = cancelled_flight_info[0]['departure_time'] if cancelled_flight_info else "2025-06-25 10:00:00"
+        cancelled_departure_location = cancelled_flight_info[0]['departure_location'] if cancelled_flight_info else "LAX"
+        
+        for passenger in assignment_results['passengers']:
+            new_flight_value = str(passenger['new_flight']) if passenger['new_flight'] else ""
+            
+            proposal = {
+                "passenger_id": passenger['passenger_id'],
+                "passenger_name": passenger['name'],
+                "original_flight": cancelled_flight_number,
+                "loyalty_tier": passenger['loyalty_tier'],
+                "rebooked_flight": new_flight_value if new_flight_value else "NO_FLIGHT_AVAILABLE",
+                "departure_location": cancelled_departure_location,
+                "arrival_location": arrival_location,
+                "original_departure_time": cancelled_departure_time,
+                "alternative_flights_available": len(alternative_flights_data),
+                "assignment_successful": new_flight_value != ""
+            }
+            
+            # Add flight details if assigned
+            if new_flight_value:
+                flight_info = [flight for flight in assignment_results['flights'] if flight['flight_number'] == new_flight_value]
+                if len(flight_info) > 0:
+                    flight = flight_info[0]
+                    proposal.update({
+                        "new_departure_time": flight['departure_time'],
+                        "new_arrival_time": flight['arrival_time'],
+                        "new_gate": flight['gate'],
+                        "remaining_seats": flight['available_seats']
+                    })
+            
+            proposals.append(proposal)
+        
+        print(f"✅ Created {len(proposals)} rebooking proposals")
+        
+        # Update state with results
+        state.update({
+            "impacted_passengers": assignment_results['passengers'],
+            "alternative_flights": assignment_results['flights'],
+            "assignment_summary": assignment_results['summary'],
+            "proposals": state.get("proposals", []) + [{"Algorithmic_Workflow": proposals}],
+            "rebooking_proposals": proposals,
+            "llm_analysis": "Algorithmic workflow executed successfully - LLM agent was unavailable",
+            "workflow_type": "algorithmic_fallback"
+        })
+        
+        state["messages"].append("Algorithmic rebooking workflow completed successfully")
+        print("✅ Algorithmic rebooking workflow completed successfully")
+        
+    except Exception as e:
+        print(f"❌ Error in algorithmic workflow: {str(e)}")
+        state["messages"].append(f"Algorithmic workflow error: {str(e)}")
+        
+        # Create minimal fallback proposals even if tools fail
+        fallback_proposals = []
+        for passenger in state.get("impacted_passengers_data", []):
+            fallback_proposals.append({
+                "passenger_id": passenger['passenger_id'],
+                "passenger_name": passenger['name'],
+                "original_flight": cancelled_flight_number,
+                "loyalty_tier": passenger['loyalty_tier'],
+                "rebooked_flight": "NO_FLIGHT_AVAILABLE",
+                "departure_location": "UNKNOWN",
+                "arrival_location": arrival_location,
+                "original_departure_time": "UNKNOWN",
+                "alternative_flights_available": 0,
+                "assignment_successful": False
+            })
+        
+        state.update({
+            "rebooking_proposals": fallback_proposals,
+            "llm_analysis": f"Critical error in algorithmic workflow: {str(e)} - minimal fallback created",
+            "workflow_type": "critical_fallback"
+        })
+    
+    return state
+
 def llm_passenger_rebooking_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     LLM-powered Passenger Rebooking Agent that makes intelligent decisions about passenger rebooking.
@@ -337,17 +500,24 @@ def llm_passenger_rebooking_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     # Initialize the LLM agent
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY environment variable is required")
+        print("❌ ANTHROPIC_API_KEY not found - switching to algorithmic fallback")
+        state["messages"].append("ANTHROPIC_API_KEY not found - switching to algorithmic fallback")
+        return hardcoded_rebooking_workflow(state)
     
-    # Set the API key as an environment variable for the ChatAnthropic class
-    os.environ["ANTHROPIC_API_KEY"] = api_key
-    
-    llm = ChatAnthropic(
-        model_name="claude-3-5-sonnet-latest", 
-        temperature=0.1, 
-        timeout=60, 
-        stop=None
-    )
+    try:
+        # Set the API key as an environment variable for the ChatAnthropic class
+        os.environ["ANTHROPIC_API_KEY"] = api_key
+        
+        llm = ChatAnthropic(
+            model_name="claude-3-5-sonnet-latest", 
+            temperature=0.1, 
+            timeout=60, 
+            stop=None
+        )
+    except Exception as e:
+        print(f"❌ Failed to initialize LLM: {str(e)} - switching to algorithmic fallback")
+        state["messages"].append(f"Failed to initialize LLM: {str(e)} - switching to algorithmic fallback")
+        return hardcoded_rebooking_workflow(state)
     
     # Define the tools available to the agent
     tools = [
@@ -425,8 +595,31 @@ Always be thorough in your analysis and explain your reasoning clearly."""
     """
     
     try:
-        # Execute the agent
-        result = agent_executor.invoke({"input": agent_input})
+        # Execute the agent with timeout protection
+        import signal
+        import platform
+        
+        # Only use signal-based timeout on Unix-like systems
+        if platform.system() != "Windows":
+            def timeout_handler(signum, frame):
+                raise TimeoutError("LLM agent execution timed out")
+            
+            # Set timeout for LLM execution (90 seconds)
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(90)
+            
+            try:
+                result = agent_executor.invoke({"input": agent_input})
+                signal.alarm(0)  # Cancel the alarm
+            except TimeoutError:
+                signal.alarm(0)  # Cancel the alarm
+                print("❌ LLM agent execution timed out - switching to algorithmic fallback")
+                state["messages"].append("LLM agent execution timed out - switching to algorithmic fallback")
+                return hardcoded_rebooking_workflow(state)
+        else:
+            # On Windows, just execute without signal-based timeout
+            # The LLM itself has a 60-second timeout built-in
+            result = agent_executor.invoke({"input": agent_input})
         
         # Extract the results from the agent's execution
         llm_output = result.get("output", "")
@@ -471,12 +664,10 @@ Always be thorough in your analysis and explain your reasoning clearly."""
                     "alternative_flights_data": state.get("alternative_flights_data", [])
                 })
         else:
-            # Perform assignment using state data
-            print(f"⚠️ No intermediate steps found - performing assignment automatically")
-            assignment_results = assign_passengers_to_flights.invoke({
-                "impacted_passengers_data": state.get("impacted_passengers_data", []),
-                "alternative_flights_data": state.get("alternative_flights_data", [])
-            })
+            # No tool calls made by LLM - trigger algorithmic fallback
+            print(f"❌ LLM made no tool calls - triggering algorithmic fallback")
+            state["messages"].append("LLM made no tool calls - switching to algorithmic fallback")
+            return hardcoded_rebooking_workflow(state)
         
         # Ensure we have assignment results
         if not assignment_results:
@@ -486,6 +677,12 @@ Always be thorough in your analysis and explain your reasoning clearly."""
                 "alternative_flights_data": state.get("alternative_flights_data", [])
             })
         
+        # Check if we have meaningful results
+        if not assignment_results or not assignment_results.get('passengers'):
+            print(f"❌ No meaningful assignment results - triggering algorithmic fallback")
+            state["messages"].append("No meaningful assignment results from LLM - switching to algorithmic fallback")
+            return hardcoded_rebooking_workflow(state)
+        
         print(f"📊 Assignment completed: {assignment_results['summary']['passengers_assigned']} passengers assigned")
         
         # Get the cancelled flight details for proposal creation
@@ -494,6 +691,12 @@ Always be thorough in your analysis and explain your reasoning clearly."""
             cancelled_flight_info = get_cancelled_flight_details.invoke({
                 "cancelled_flight_number": cancelled_flight_number
             })
+        
+        # Validate that we have the required flight details
+        if not cancelled_flight_info or not cancelled_flight_info[0].get('departure_time'):
+            print(f"❌ Missing flight details - triggering algorithmic fallback")
+            state["messages"].append("Missing flight details from LLM - switching to algorithmic fallback")
+            return hardcoded_rebooking_workflow(state)
         
         cancelled_departure_time = cancelled_flight_info[0]['departure_time']
         cancelled_departure_location = cancelled_flight_info[0]['departure_location']
@@ -511,7 +714,7 @@ Always be thorough in your analysis and explain your reasoning clearly."""
                 "rebooked_flight": new_flight_value if new_flight_value else "NO_FLIGHT_AVAILABLE",
                 "departure_location": cancelled_departure_location,
                 "arrival_location": arrival_location,
-                "original_departure_time": cancelled_flight_info[0]['departure_time'],
+                "original_departure_time": cancelled_departure_time,
                 "alternative_flights_available": len(state.get("alternative_flights_data", [])),
                 "assignment_successful": new_flight_value != ""
             }
@@ -547,16 +750,28 @@ Always be thorough in your analysis and explain your reasoning clearly."""
     except Exception as e:
         print(f"❌ Error in LLM agent: {str(e)}")
         state["messages"].append(f"LLM Passenger Rebooking Agent error: {str(e)}")
-        # Fallback to basic functionality
-        state["messages"].append("Falling back to basic rebooking logic")
+        
+        # Clear any partial state that might have been set by the failed LLM run
+        state.pop("impacted_passengers_data", None)
+        state.pop("alternative_flights_data", None)
+        state.pop("cancelled_flight_info", None)
+        state.pop("llm_analysis", None)
+        state.pop("llm_agent_result", None)
+        
+        # Fallback to algorithmic workflow
+        print("🔄 LLM agent failed - switching to algorithmic fallback workflow...")
+        state["messages"].append("Switching to algorithmic fallback workflow due to LLM failure")
+        
+        # Execute the algorithmic workflow and return its result directly
+        return hardcoded_rebooking_workflow(state)
     
     return state
 
-def test_llm_agent():
+def test_algorithmic_workflow():
     """
-    Test function for the LLM-powered passenger rebooking agent
+    Test function for the algorithmic rebooking workflow
     """
-    print("Testing LLM-powered passenger rebooking agent...")
+    print("Testing algorithmic rebooking workflow...")
     
     # Sample flight cancellation notification
     test_cancellation = {
@@ -568,22 +783,41 @@ def test_llm_agent():
     # Test state with cancellation notification
     test_state = {
         "proposals": [],
-        "flight_cancellation_notification": test_cancellation
+        "flight_cancellation_notification": test_cancellation,
+        "messages": []
     }
     
-    # Test the LLM passenger rebooking agent
-    result = llm_passenger_rebooking_agent(test_state)
+    # Test the algorithmic workflow
+    result = hardcoded_rebooking_workflow(test_state)
     
-    print("\nTest Results:")
-    print(f"Impacted passengers count: {len(result.get('impacted_passengers', []))}")
-    print(f"Alternative flights count: {len(result.get('alternative_flights', []))}")
-    print(f"Number of rebooking proposals: {len(result.get('rebooking_proposals', []))}")
-    
-    if result.get('llm_analysis'):
-        print(f"\nLLM Analysis:")
-        print(result['llm_analysis'])
+    print("\nAlgorithmic Workflow Test Results:")
+    print(f"Impacted passengers: {len(result.get('impacted_passengers_data', []))}")
+    print(f"Alternative flights: {len(result.get('alternative_flights_data', []))}")
+    print(f"Proposals created: {len(result.get('rebooking_proposals', []))}")
+    print(f"Messages: {result.get('messages', [])}")
     
     return result
 
 if __name__ == "__main__":
-    test_llm_agent() 
+    # Test the algorithmic workflow
+    test_algorithmic_workflow()
+    
+    # Test the LLM agent (if API key is available)
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if api_key:
+        print("\n" + "="*50)
+        print("Testing LLM agent...")
+        
+        test_state = {
+            "proposals": [],
+            "flight_cancellation_notification": {
+                "flight_number": "UA70161",
+                "arrival_location": "ORD"
+            },
+            "messages": []
+        }
+        
+        result = llm_passenger_rebooking_agent(test_state)
+        print(f"LLM Agent Results: {len(result.get('rebooking_proposals', []))} proposals")
+    else:
+        print("\nANTHROPIC_API_KEY not found - skipping LLM agent test") 
