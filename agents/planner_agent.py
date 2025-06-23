@@ -391,65 +391,49 @@ def generate_executive_summary(state: Dict[str, Any], run_id: str) -> Dict[str, 
 
     # Prepare a formatted string for delay advisories
     delay_advisories = state.get("delay_advisories", [])
-    #print(f"[DEBUG] Delay advisories in state: {delay_advisories}")
     if delay_advisories:
         advisories_str = "Published Delay Advisories:\n" + '\n'.join(f"- {adv}" for adv in delay_advisories)
-        #print(f"[DEBUG] Formatted advisories string: {advisories_str}")
     else:
         advisories_str = "No delay advisories published."
     
-    # Prepare rebooking information for the Customer Rebooking Report
-    rebooking_info = ""
-    if state.get("flight_cancellation_notification"):
-        impacted_passengers = state.get("impacted_passengers", [])
-        alternative_flights = state.get("alternative_flights", [])
-        confirmations = state.get("confirmations", [])
-        
-        # Check for algorithmic fallback usage
-        workflow_type = state.get("workflow_type", "llm_agent")
-        llm_analysis = state.get("llm_analysis", "")
-        
-        rebooking_info = f"""
-Customer Rebooking Information:
-- Cancelled Flight: {state['flight_cancellation_notification']['flight_number']} to {state['flight_cancellation_notification']['arrival_location']}
-- Impacted Passengers: {len(impacted_passengers)} passengers
-- Alternative Flights Found: {len(alternative_flights)} options
-- Confirmation Results: {len(confirmations)} responses collected
-"""
-        
-        # Add algorithmic fallback information
-        if workflow_type in ["algorithmic_fallback", "critical_fallback"]:
-            rebooking_info += f"- System Performance: Algorithmic assignment workflow was engaged due to LLM agent unavailability\n"
-            rebooking_info += f"- Fallback Reason: {llm_analysis}\n"
-        else:
-            rebooking_info += f"- System Performance: LLM-powered rebooking completed successfully\n"
-        
-        if confirmations:
-            accepted = [c for c in confirmations if c.get('response') == 'accept rebooking']
-            manual = [c for c in confirmations if c.get('response') == 'manually rebook with agent']
-            rebooking_info += f"- Accepted Rebookings: {len(accepted)} passengers\n"
-            rebooking_info += f"- Manual Rebooking Requests: {len(manual)} passengers\n"
-            rebooking_info += f"- Database Updates: {len(confirmations)} passenger records updated\n"
-    else:
-        rebooking_info = "No flight cancellations or rebooking activities occurred."
-
-    # Check for algorithmic fallback usage
-    workflow_type = state.get("workflow_type", "llm_agent")
-    llm_analysis = state.get("llm_analysis", "")
+    # Get rebooking information
+    cancelled_flight = state.get("flight_cancellation_notification", {}).get("flight_number", "None")
+    impacted_count = len(state.get("impacted_passengers", []))
+    alternative_count = len(state.get("alternative_flights", []))
+    confirmation_count = len(state.get("confirmations", []))
+    accepted_count = len([c for c in state.get("confirmations", []) if c.get("response") == "accept rebooking"])
+    manual_count = len([c for c in state.get("confirmations", []) if c.get("response") == "manually rebook with agent"])
     
-    system_performance_info = ""
-    if workflow_type in ["algorithmic_fallback", "critical_fallback"]:
-        system_performance_info = f"""
-System Performance Note:
-- Algorithmic assignment workflow was engaged due to LLM agent unavailability
-- Fallback Reason: {llm_analysis}
-- All rebooking operations completed successfully using algorithmic assignment
+    # Create the prompt with actual data
+    rebooking_summary = f"""
+2. CUSTOMER REBOOKING SUMMARY:
+- Cancelled Flight: {cancelled_flight}
+- Impacted Passengers: {impacted_count}
+- Alternative Flights Found: {alternative_count}
+- Confirmations Collected: {confirmation_count}
+- Accepted Rebookings: {accepted_count}
+- Manual Rebooking Requests: {manual_count}
+- Database Updates: {confirmation_count} passenger records modified
 """
-    else:
-        system_performance_info = """
-System Performance Note:
-- All LLM-powered agentic systems functioning
-"""
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", 
+         "You are an executive planner summarizing operational activity.\n"
+         "Use `read_messages_tool` to access the system-wide activity log.\n"
+         "Then provide a clear executive summary with TWO SECTIONS:\n\n"
+         "1. OPERATIONS REPORT:\n"
+         "- Major actions taken by dispatch and crew agents\n"
+         "- Any remaining issues or risks\n"
+         "- Recommended next steps or resolutions\n"
+         "- Resolution Steps: List all crew substitutions made, using the following data:\n"
+         f"{resolution_steps_str}\n"
+         "- Published Delay Advisories: List all advisories published, using the following data:\n"
+         f"{advisories_str}\n\n"
+         f"{rebooking_summary}\n"
+         "Provide a professional, concise summary suitable for executive review."),
+        ("human", "{input}"),
+        ("placeholder", "{agent_scratchpad}")
+    ])
 
     # Initialize the LLM agent
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -464,32 +448,6 @@ System Performance Note:
     )
     
     tools = [read_messages_tool]
-
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", 
-         "You are an executive planner summarizing operational activity.\n"
-         "Use `read_messages_tool` to access the system-wide activity log.\n"
-         "Then provide a clear executive summary with THREE SECTIONS:\n\n"
-         "1. OPERATIONS REPORT:\n"
-         "- Major actions taken by dispatch and crew agents\n"
-         "- Any remaining issues or risks\n"
-         "- Recommended next steps or resolutions\n"
-         "- Resolution Steps: List all crew substitutions made, using the following data:\n"
-         f"{resolution_steps_str}\n"
-         "- Published Delay Advisories: List all advisories published, using the following data:\n"
-         f"{advisories_str}\n\n"
-         "2. SYSTEM PERFORMANCE REPORT:\n"
-         "IMPORTANT: You MUST include the following system performance information exactly as provided:\n"
-         f"{system_performance_info}\n\n"
-         "3. CUSTOMER REBOOKING REPORT:\n"
-         "Use the following rebooking data to summarize passenger rebooking activities:\n"
-         f"{rebooking_info}\n"
-         "If no rebooking occurred, state that explicitly.\n\n"
-         "Format your response with clear section headers and bullet points for easy reading."
-        ),
-        ("user", "{input}"),
-        ("ai", "{agent_scratchpad}")
-    ])
 
     agent = create_tool_calling_agent(llm=llm, tools=tools, prompt=prompt)
     agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False)

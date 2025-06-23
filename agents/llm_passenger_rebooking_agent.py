@@ -31,6 +31,15 @@ def get_database_client_instance():
         _database_client = get_database_client()
     return _database_client
 
+# Import the tools - COMMENTED OUT TO FIX CIRCULAR IMPORT
+# from agents.llm_passenger_rebooking_agent import (
+#     get_impacted_passengers,
+#     get_cancelled_flight_details,
+#     find_alternative_flights,
+#     assign_passengers_from_state,
+#     update_passenger_records
+# )
+
 @tool
 def find_alternative_flights(cancelled_flight_number: str, departure_location: str, arrival_location: str, cancelled_departure_time: str, passenger_count: int = 10) -> List[Dict[str, Any]]:
     """
@@ -742,7 +751,8 @@ Always be thorough in your analysis and explain your reasoning clearly."""
             "proposals": state.get("proposals", []) + [{"LLM_PassengerRebookingAgent": proposals}],
             "rebooking_proposals": proposals,
             "llm_analysis": llm_output,
-            "llm_agent_result": result
+            "llm_agent_result": result,
+            "workflow_type": "llm_agent"  # Set workflow type for successful LLM execution
         })
         
         state["messages"].append("LLM Passenger Rebooking Agent completed intelligent rebooking analysis")
@@ -757,12 +767,10 @@ Always be thorough in your analysis and explain your reasoning clearly."""
         state.pop("cancelled_flight_info", None)
         state.pop("llm_analysis", None)
         state.pop("llm_agent_result", None)
+        state.pop("workflow_type", None)  # Clear any existing workflow_type
         
         # Fallback to algorithmic workflow
         print("🔄 LLM agent failed - switching to algorithmic fallback workflow...")
-        state["messages"].append("Switching to algorithmic fallback workflow due to LLM failure")
-        
-        # Execute the algorithmic workflow and return its result directly
         return hardcoded_rebooking_workflow(state)
     
     return state
